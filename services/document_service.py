@@ -1,3 +1,4 @@
+# services/document_service.py
 import fitz
 import pdfplumber
 import os
@@ -336,21 +337,26 @@ class DocumentService:
             return {'success': False, 'error': f"Failed to extract text from PPTX: {str(e)}"}
     
     def _create_semantic_chunks(self, documents: List[Document], file_id: str, filename: str) -> List[Document]:
-        """Create semantic chunks with enhanced metadata"""
+        """Improved chunking with better overlap and context preservation"""
         chunks = []
         
         for doc in documents:
-            # Clean content
             processed_content = self._preprocess_content(doc.page_content)
             
-            # Create base chunks
-            base_chunks = self.text_splitter.split_text(processed_content)
+            # IMPROVED: Use smaller chunks with more overlap for better retrieval
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=800,  # Reduced from 1000
+                chunk_overlap=400,  # Increased overlap
+                length_function=len,
+                separators=["\n\n", "\n", ". ", "! ", "? ", "; ", ", ", " ", ""]
+            )
+            
+            base_chunks = text_splitter.split_text(processed_content)
             
             for i, chunk_content in enumerate(base_chunks):
-                if len(chunk_content.strip()) < 50:  # Skip very small chunks
+                if len(chunk_content.strip()) < 50:
                     continue
                 
-                # Enhanced metadata
                 enhanced_metadata = doc.metadata.copy()
                 enhanced_metadata.update({
                     'file_id': file_id,
