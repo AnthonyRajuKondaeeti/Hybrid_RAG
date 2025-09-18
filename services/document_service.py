@@ -125,14 +125,24 @@ class DocumentService:
         documents = []
         # PyMuPDF first
         try:
-            with fitz.open(filepath) as pdf_doc:
+            # Try newer PyMuPDF API first, then fall back to older
+            try:
+                pdf_doc = fitz.open(filepath)  # Newer API
+            except AttributeError:
+                import pymupdf as fitz_new  # Alternative import
+                pdf_doc = fitz_new.open(filepath)
+            
+            try:
                 for page_num in range(len(pdf_doc)):
                     page = pdf_doc.load_page(page_num)
                     text = page.get_text()
                     if text and text.strip():
                         metadata = {'page': page_num + 1, 'source': filepath, 'extraction_method': 'pymupdf'}
                         documents.append(Document(page_content=text, metadata=metadata))
-                if documents:
+            finally:
+                pdf_doc.close()
+                
+            if documents:
                     return {'success': True, 'documents': documents, 'method': 'pymupdf'}
         except Exception as e:
             logger.warning(f"PyMuPDF extraction failed: {str(e)}")
