@@ -36,14 +36,21 @@ class OCRProcessor:
     def __init__(self):
         self.reader = None
         self.ocr_initialized = False
+        self.initialization_attempted = False
         self.supported_languages = Config.OCR_LANGUAGES
         self.confidence_threshold = Config.OCR_CONFIDENCE_THRESHOLD
         self.gpu_enabled = Config.OCR_GPU_ENABLED and HAS_TORCH and torch.cuda.is_available()
         
-        self._initialize_ocr()
+        # Don't initialize OCR immediately - use lazy initialization
+        logger.info("OCR processor created with lazy initialization")
     
     def _initialize_ocr(self):
-        """Initialize EasyOCR reader with error handling."""
+        """Initialize EasyOCR reader with error handling (lazy initialization)."""
+        if self.initialization_attempted:
+            return  # Don't try to initialize multiple times
+            
+        self.initialization_attempted = True
+        
         if not HAS_EASYOCR:
             logger.error("EasyOCR not available. Install with: pip install easyocr")
             return
@@ -60,8 +67,16 @@ class OCRProcessor:
             logger.error(f"Failed to initialize OCR reader: {str(e)}")
             self.ocr_initialized = False
     
+    def initialize_if_needed(self) -> bool:
+        """Manually initialize OCR if not already done. Returns success status."""
+        if not self.ocr_initialized and not self.initialization_attempted:
+            self._initialize_ocr()
+        return self.ocr_initialized
+    
     def is_available(self) -> bool:
-        """Check if OCR functionality is available."""
+        """Check if OCR functionality is available (with lazy initialization)."""
+        if not self.ocr_initialized and not self.initialization_attempted:
+            self._initialize_ocr()
         return self.ocr_initialized and self.reader is not None
     
     def preprocess_image(self, image: np.ndarray) -> np.ndarray:
