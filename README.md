@@ -20,6 +20,7 @@
 ## ✨ Features
 
 ### Core Capabilities
+
 - **📄 Multi-Format Processing** - PDF, DOCX, Excel, PowerPoint, images (OCR)
 - **🤖 Advanced RAG** - Mistral AI + semantic search + conversation memory
 - **🔍 Hybrid Search** - Semantic similarity + keyword matching
@@ -27,6 +28,7 @@
 - **📊 Real-time Analytics** - Processing stats and performance metrics
 
 ### Technical Features
+
 - **🧠 Intelligent Chunking** - Semantic-aware document segmentation
 - **💬 Conversation Memory** - Context retention across queries
 - **⚡ High Performance** - Optimized processing and caching
@@ -35,6 +37,7 @@
 ## 🚀 Quick Start
 
 ### Prerequisites
+
 - Python 3.12+
 - [Qdrant Cloud](https://cloud.qdrant.io/) account
 - [Mistral AI](https://console.mistral.ai/) API key
@@ -70,7 +73,9 @@ python run.py                 # Start server
 ## 📡 API Documentation
 
 ### Authentication
+
 All endpoints require JWT token:
+
 ```http
 Authorization: Bearer <token>
 ```
@@ -78,6 +83,7 @@ Authorization: Bearer <token>
 ### Core Endpoints
 
 #### 📄 Upload Documents
+
 ```http
 POST /process_file
 Content-Type: multipart/form-data
@@ -89,22 +95,26 @@ Form Data:
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
-  "data": [{
-    "session_id": "abc123...",
-    "file_id": "def456...",
-    "filename": "document.pdf",
-    "processing_stats": {
-      "total_chunks": 45,
-      "processing_time": 3.45
+  "data": [
+    {
+      "session_id": "abc123...",
+      "file_id": "def456...",
+      "filename": "document.pdf",
+      "processing_stats": {
+        "total_chunks": 45,
+        "processing_time": 3.45
+      }
     }
-  }]
+  ]
 }
 ```
 
 #### ❓ Ask Questions
+
 ```http
 POST /answer_question
 Content-Type: application/json
@@ -117,6 +127,7 @@ Content-Type: application/json
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -130,6 +141,7 @@ Content-Type: application/json
 ```
 
 #### 💡 Sample Questions
+
 ```http
 POST /sample_questions
 {
@@ -139,6 +151,7 @@ POST /sample_questions
 ```
 
 #### 🔄 File Management
+
 ```http
 POST /replace_file        # Replace document
 POST /delete_selected_files   # Delete documents
@@ -148,19 +161,20 @@ GET /health_check         # API status
 
 ## 💾 Supported Formats
 
-| Category | Formats | Processing |
-|----------|---------|------------|
-| **Documents** | PDF, DOCX, TXT, MD, RTF, ODT | Text extraction |
-| **Spreadsheets** | XLSX, XLSM, CSV | Data parsing |
-| **Presentations** | PPT, PPTX | Content extraction |
-| **Images** | JPG, PNG, BMP, TIFF | OCR processing |
-| **Web** | HTML, EPUB | Content parsing |
+| Category          | Formats                      | Processing         |
+| ----------------- | ---------------------------- | ------------------ |
+| **Documents**     | PDF, DOCX, TXT, MD, RTF, ODT | Text extraction    |
+| **Spreadsheets**  | XLSX, XLSM, CSV              | Data parsing       |
+| **Presentations** | PPT, PPTX                    | Content extraction |
+| **Images**        | JPG, PNG, BMP, TIFF          | OCR processing     |
+| **Web**           | HTML, EPUB                   | Content parsing    |
 
 **Limits:** 50MB per file, 10 files per request
 
 ## 🧪 Testing
 
 ### Quick Tests
+
 ```bash
 # Connection tests
 python test_qdrant_manual.py
@@ -177,15 +191,17 @@ curl -X POST "http://localhost:5000/process_file" \
 ```
 
 ### Performance Benchmarks
-| Operation | Small (<1MB) | Medium (1-10MB) | Large (10-50MB) |
-|-----------|--------------|-----------------|-----------------|
-| Upload & Process | <2s | <10s | <30s |
-| Question Answer | <3s | <5s | <8s |
-| OCR Processing | <5s | <15s | <45s |
+
+| Operation        | Small (<1MB) | Medium (1-10MB) | Large (10-50MB) |
+| ---------------- | ------------ | --------------- | --------------- |
+| Upload & Process | <2s          | <10s            | <30s            |
+| Question Answer  | <3s          | <5s             | <8s             |
+| OCR Processing   | <5s          | <15s            | <45s            |
 
 ## 🔧 Configuration
 
 ### Environment Variables
+
 ```env
 # Required
 MISTRAL_API_KEY=your_api_key
@@ -200,6 +216,7 @@ ENABLE_IMAGE_ANALYSIS=true
 ```
 
 ### Model Options
+
 ```python
 # Embedding models
 "all-MiniLM-L6-v2"      # Fast, good quality
@@ -215,13 +232,15 @@ ENABLE_IMAGE_ANALYSIS=true
 ## 📊 Performance
 
 ### System Requirements
+
 | Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| CPU | 2 cores | 4+ cores |
-| RAM | 4GB | 8GB+ |
-| Storage | 10GB | 50GB+ |
+| --------- | ------- | ----------- |
+| CPU       | 2 cores | 4+ cores    |
+| RAM       | 4GB     | 8GB+        |
+| Storage   | 10GB    | 50GB+       |
 
 ### Optimization Tips
+
 ```python
 # Performance tuning
 CHUNK_SIZE = 250         # Smaller = faster search
@@ -230,6 +249,7 @@ ENABLE_CACHING = True    # Cache responses
 ```
 
 ### Common Issues & Solutions
+
 ```bash
 # Qdrant connection failed
 python test_qdrant_manual.py
@@ -251,6 +271,7 @@ Client → Flask API → [Document Service, RAG Service, OCR Processor]
 ```
 
 ### Project Structure
+
 ```
 Xplorease_V2-main/
 ├── app.py                    # Main Flask application
@@ -268,6 +289,7 @@ Xplorease_V2-main/
 ```
 
 ### Technology Stack
+
 - **Backend:** Python 3.12+, Flask 3.1+
 - **AI/ML:** Mistral AI, LangChain, Sentence Transformers
 - **Database:** Qdrant Vector DB
@@ -296,6 +318,6 @@ MIT License - see [LICENSE](LICENSE) file.
 
 Made with ❤️ by the Xplorease Team
 
-**📧 Support:** support@xplorease.com | **🐛 Issues:** [GitHub Issues](https://github.com/AnthonyRajuKondaeeti/Xplorease_V2/issues)
+**🐛 Issues:** [GitHub Issues](https://github.com/AnthonyRajuKondaeeti/Xplorease_V2/issues)
 
 </div>
