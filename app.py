@@ -1,8 +1,9 @@
-from flask import Flask, request, jsonify, current_app
+from flask import Flask, request, jsonify, current_app, sessions
 from flask_cors import CORS
 import os
 import uuid
 import hashlib
+import time
 from datetime import datetime
 from werkzeug.utils import secure_filename
 import logging
@@ -10,31 +11,136 @@ import jwt
 from functools import wraps
 from typing import Dict, Any, List
 
+# Ensure environment is loaded first
+from dotenv import load_dotenv
+load_dotenv()
+
 from qdrant_client.http import models 
-from config import Config
+from langchain_core.documents import Document
+
+# Import Config after loading environment
+try:
+    from config import Config
+    # Make Config available as a module-level variable
+    APP_CONFIG = Config
+except ImportError as e:
+    print(f"app Failed to import Config: {e}")
+    raise
+
 from services.document_service import DocumentService
-from services.rag_service import HybridRAGService  # Using the enhanced version
-from services.mistral_rag_evaluation_service import EnhancedRAGEvaluationService
+from services.ocr_processor import OCRProcessor
+from services.rag_service import EnhancedRAGService  # Using the enhanced version
 from utils.response_formatter import ResponseFormatter
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+def setup_logging():
+    """Configure logging with structured format"""
+    log_format = '%(asctime)s | %(name)s | %(levelname)s | %(funcName)s:%(lineno)d | %(message)s'
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format=log_format,
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('app.log', mode='a')
+        ]
+    )
+    
+    # Reduce noise from third-party libraries
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)
+    logging.getLogger('qdrant_client').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
+    
+    return logging.getLogger(__name__)
+
+logger = setup_logging()
 
 # Simple JWT secret (you should use a proper secret in production)
 JWT_SECRET = "your-jwt-secret-key"
+
+def log_file_processing_summary(filename, file_size, file_ext, save_time, processing_time, vector_time, total_time):
+    """Consolidated file processing log"""
+    rate_mb_per_sec = (file_size / 1024 / 1024) / total_time if total_time > 0 else 0
+    
+    logger.info(f"Document processing: {filename} | "
+               f"Size: {file_size:,}B | Total: {total_time:.2f}s | "
+               f"Rate: {rate_mb_per_sec:.2f}MB/s")
+    
+    # Only warn for genuinely slow processing
+    if (file_ext in ['xlsx', 'xlsm'] and total_time > 15) or total_time > 45:
+        logger.warning(f"Slow processing: {filename} took {total_time:.2f}s")
+
+def validate_session(session_id, sessions, require_rag_service=True):
+    """Centralized session validation"""
+    if not session_id:
+        return {'valid': False, 'error': 'session_id is required', 'status': 400}
+    
+    if session_id not in sessions:
+        logger.warning(f"Invalid session: {session_id[:8]}...")
+        return {'valid': False, 'error': 'Invalid session', 'status': 400}
+    
+    session_data = sessions[session_id]
+    
+    if require_rag_service and 'rag_service' not in session_data:
+        logger.error(f"Session {session_id[:8]}... missing rag_service")
+        return {'valid': False, 'error': 'Session corrupted - missing RAG service', 'status': 500}
+    
+    return {'valid': True, 'session_data': session_data}
+
+def create_response(success, data=None, message=None, errors=None, status=200):
+    """Simplified response creator"""
+    response = {
+        'success': success,
+        'status': status
+    }
+    
+    if success:
+        if data is not None:
+            response['data'] = data
+        if message:
+            response['message'] = message if isinstance(message, list) else [message]
+    else:
+        response['errors'] = errors if isinstance(errors, list) else [errors] if errors else ['Unknown error']
+    
+    return jsonify(response), status
+
+def log_session_action(session_id, action, details=None):
+    """Standardized session action logging"""
+    session_prefix = session_id[:8] + "..." if session_id else "unknown"
+    log_msg = f"Session {session_prefix}: {action}"
+    if details:
+        log_msg += f" | {details}"
+    logger.info(log_msg)
+
+def validate_image_file(file):
+    """Validate uploaded image file."""
+    if not file or not file.filename:
+        return False, "No file selected"
+    
+    file_ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+    image_formats = ['jpg', 'jpeg', 'png', 'bmp', 'tiff']
+    
+    if file_ext not in image_formats:
+        return False, f"Unsupported image format. Supported formats: {', '.join(image_formats)}"
+    
+    # Check file size
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)
+    
+    max_size_bytes = 10 * 1024 * 1024  # 10MB limit for images
+    if file_size > max_size_bytes:
+        return False, f"File too large. Maximum size: 10MB"
+    
+    return True, ""
 
 def create_app():
     app = Flask(__name__)
     
     # Validate configuration
-    Config.validate()
+    APP_CONFIG.validate()
     
     # Configuration
-    app.config.from_object(Config)
+    app.config.from_object(APP_CONFIG)
     
     # Enable CORS for V2 compatibility
     CORS(app, resources={
@@ -50,12 +156,11 @@ def create_app():
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     
     # Initialize services
-    document_service = DocumentService()
-    evaluation_service = EnhancedRAGEvaluationService(
-        mistral_api_key=Config.MISTRAL_API_KEY,
-        mistral_model=Config.MISTRAL_MODEL
+    document_service = DocumentService(
+        chunk_size=APP_CONFIG.CHUNK_SIZE,
+        chunk_overlap=APP_CONFIG.CHUNK_OVERLAP
     )
-    
+    ocr_processor = OCRProcessor()
     # In-memory session storage (use Redis in production)
     sessions: Dict[str, Dict[str, Any]] = {}
     
@@ -152,14 +257,33 @@ def create_app():
             skipped_files = []
             processing_errors = []
             
-            # Define a list of allowed extensions
+            # Define a list of allowed extensions (documents only)
             ALLOWED_EXTENSIONS = {
                 'pdf', 'html', 'epub', 'rtf', 'odt', 'docx', 'txt',
-                'xlsx', 'xlsm', 'csv', 'ppt', 'pptx', 'md'
+                'xlsx', 'xlsm', 'csv', 'ppt', 'pptx', 'md',
+                'jpg', 'jpeg', 'png', 'bmp', 'tiff'  # Add image formats
             }
             
             # Initialize a NEW HybridRAGService instance for this session
-            rag_service = HybridRAGService(Config)
+            try:
+                from config import Config as LocalConfig
+                rag_service = EnhancedRAGService(LocalConfig)
+                logger.info("EnhancedRAGService initialized successfully")
+            except ImportError as e:
+                logger.error(f"Failed to import Config: {e}")
+                return jsonify({
+                    'success': False,
+                    'status': 500,
+                    'errors': [f'Configuration import error: {str(e)}']
+                }), 500
+            except Exception as e:
+                logger.error(f"Failed to initialize EnhancedRAGService: {e}")
+                return jsonify({
+                    'success': False,
+                    'status': 500,
+                    'errors': [f'Service initialization error: {str(e)}']
+                }), 500
+                
             session_id = generate_session_id()
             
             for file in files:
@@ -167,6 +291,14 @@ def create_app():
                 if file_extension not in ALLOWED_EXTENSIONS:
                     skipped_files.append(f'{file.filename} (unsupported file type)')
                     continue
+
+                # Additional validation for image files
+                is_image = file_extension in ['jpg', 'jpeg', 'png', 'bmp', 'tiff']
+                if is_image:
+                    is_valid, error_msg = validate_image_file(file)
+                    if not is_valid:
+                        skipped_files.append(f'{file.filename} ({error_msg})')
+                        continue
 
                 original_filename = secure_filename(file.filename)
                 file_id = generate_file_id_from_email_filename(email, original_filename)
@@ -176,33 +308,89 @@ def create_app():
                 filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
                 
                 try:
+                    file_start_time = time.time()
+                    file_size = len(file.read())
+                    file.seek(0)  # Reset file pointer after reading size
+                
+                    # Save file temporarily  
+                    save_start = time.time()
                     file.save(filepath)
+                    save_time = time.time() - save_start
                     
-                    # Process document with DocumentService
+                    # Determine file type for processing
+                    file_type = 'image' if is_image else 'document'
+                    
+                    # Process document with DocumentService (now handles images with OCR)
+                    doc_process_start = time.time()
                     result = document_service.process_document(filepath, file_id, original_filename)
+                    doc_process_time = time.time() - doc_process_start
                     
                     if result['success']:
-                        # Store in vector database using the enhanced instance
+                        # Add file type to metadata
+                        result['metadata']['file_type'] = file_type
+                        if is_image:
+                            result['metadata']['requires_ocr'] = True
+                        
+                        # Store in vector database
+                        vector_start = time.time()
                         chunks_result = rag_service.store_document_chunks(
                             result['chunks'], 
                             file_id,
                             result['metadata']
                         )
-                        
+                        vector_time = time.time() - vector_start
+                                                
                         if chunks_result['success']:
+                            file_total_time = time.time() - file_start_time
+                            processing_time = result.get('processing_time', file_total_time - save_time - vector_time)
+                            
+                            log_file_processing_summary(
+                                original_filename, file_size, file_extension,
+                                save_time, processing_time, vector_time, file_total_time
+                            )
+                                   
                             processed_files.append({
                                 'file_id': file_id,
                                 'filename': original_filename,
                                 'qr_name': qr_name,
+                                'file_type': file_type,  # 'image' or 'document'
                                 'processing_stats': result.get('processing_stats', {}),
-                                'metadata': result.get('metadata', {})
+                                'metadata': result.get('metadata', {}),
+                                'timing_breakdown': {
+                                    'file_save_time': save_time,
+                                    'processing_time': processing_time,
+                                    'vector_storage_time': vector_time,
+                                    'total_time': file_total_time,
+                                    'file_size': file_size,
+                                    'processing_rate_mb_per_sec': (file_size / 1024 / 1024) / file_total_time if file_total_time > 0 else 0
+                                }
                             })
                         else:
-                            processing_errors.append(f'Failed to store {original_filename}: {chunks_result["error"]}')
+                            # Handle storage errors (existing error handling remains the same)
+                            error_info = chunks_result.get('error', 'Unknown storage error')
+                            error_type = chunks_result.get('error_type', 'general_processing_error')
+                            retry_recommended = chunks_result.get('retry_recommended', True)
+                            
+                            if error_type == 'transient_model_error':
+                                friendly_error = f'Temporary processing issue with {original_filename}. Please try uploading again.'
+                                logger.warning(f"Transient error for {original_filename}: {error_info}")
+                            elif error_type == 'empty_content_error':
+                                friendly_error = f'No readable content found in {original_filename}. File may be empty or corrupted.'
+                                logger.warning(f"Empty content error for {original_filename}: {error_info}")
+                            else:
+                                friendly_error = f'Failed to store {original_filename}: {error_info}'
+                                logger.error(f"Storage error for {original_filename}: {error_info}")
+                            
+                            processing_errors.append(friendly_error)
+                            
+                            if retry_recommended:
+                                processing_errors.append(f'Temporary issue with {original_filename}. Please retry.')
                     else:
                         processing_errors.append(f'Failed to process {original_filename}: {result["error"]}')
                 
                 except Exception as e:
+                    file_total_time = time.time() - file_start_time if 'file_start_time' in locals() else 0
+                    logger.error(f'Error processing {original_filename} after {file_total_time:.2f}s: {str(e)}')
                     processing_errors.append(f'Error with {original_filename}: {str(e)}')
                 
                 finally:
@@ -241,18 +429,21 @@ def create_app():
                 # Create data array with all processed files
                 data = []
                 for processed_file in processed_files:
-                    data.append({
+                    file_data = {
                         'session_id': session_id,
                         'user_id': email,
                         'qr_name': qr_name,
                         'file_id': processed_file['file_id'],
                         'filename': processed_file['filename'],
+                        'file_type': processed_file.get('file_type', 'document'),
                         'chat_url': chat_url,
                         'qr_url': qr_url,
                         'logo_url': logo_url,
                         'processing_stats': processed_file.get('processing_stats', {}),
                         'document_metadata': processed_file.get('metadata', {})
-                    })
+                    }
+                    
+                    data.append(file_data)
                 
                 return jsonify({
                     'success': True,
@@ -316,31 +507,49 @@ def create_app():
                     'errors': ['file_id is required to specify which document to query.']
                 }), 400
 
-            # Check if session exists and retrieve the specific HybridRAGService instance
-            if session_id not in sessions:
-                return jsonify({
-                    'success': False,
-                    'status': 400,
-                    'errors': ['Invalid session']
-                }), 400
+            validation = validate_session(session_id, sessions, require_rag_service=True)
+            if not validation['valid']:
+                return create_response(False, errors=[validation['error']], status=validation['status'])
 
-            session_data = sessions[session_id]
-            rag_service = session_data['rag_service']
-
-            try:
-                # Process question with the enhanced RAG service
-                result = rag_service.answer_question(
-                    file_id=file_id,
-                    question=question,
-                    conversation_history=conversation_history
-                )
-            except Exception as inner_e:
-                tb = traceback.format_exc()
-                logger.error(f"Error in rag_service.answer_question: {str(inner_e)}\n{tb}")
+            rag_service = validation['session_data']['rag_service']
+            
+            # Validate that the RAG service is properly initialized
+            if not hasattr(rag_service, 'answer_question'):
+                logger.error(f"RAG service in session {session_id} is corrupted")
                 return jsonify({
                     'success': False,
                     'status': 500,
-                    'errors': [f'Error in answer_question: {str(inner_e)}', tb]
+                    'errors': ['RAG service corrupted']
+                }), 500
+
+            try:
+                # Process question with the enhanced RAG service
+                log_session_action(session_id, "Processing question", f"file: {file_id[:8]}...")
+
+                
+                result = rag_service.answer_question(
+                    file_id=file_id,
+                    question=question,
+                    conversation_history=conversation_history,
+                    session_id=session_id  # Add session_id for conversation memory
+                )
+                
+                logger.info(f"RAG service returned: success={result.get('success', False)}")
+                
+            except Exception as inner_e:
+                tb = traceback.format_exc()
+                logger.error(f"Critical error in rag_service.answer_question: {str(inner_e)}")
+                logger.error(f"Inner traceback:\n{tb}")
+                
+                # Return a graceful error response
+                return jsonify({
+                    'success': False,
+                    'status': 500,
+                    'errors': [f'RAG processing failed: {str(inner_e)}'],
+                    'debug_info': {
+                        'inner_error': str(inner_e),
+                        'error_location': 'rag_service.answer_question'
+                    }
                 }), 500
 
             if result['success']:
@@ -349,8 +558,23 @@ def create_app():
                     'answer': result['answer'],
                     'confidence_score': result.get('confidence_score', 0.5),
                     'processing_time': result.get('processing_time', 0),
-                    'question_type': result.get('question_type', 'general')
+                    'question_type': result.get('question_type', 'general'),
+                    'source_type': 'document'  # Document processing only
                 }
+                
+                # Add translation-specific information if available
+                translation_info = result.get('translation_info')
+                if translation_info:
+                    response_data['translation_info'] = {
+                        'original_text': translation_info.get('original_text'),
+                        'source_language': translation_info.get('source_language'),
+                        'target_language': translation_info.get('target_language'),
+                        'processing_type': translation_info.get('processing_type'),
+                        'context': translation_info.get('context'),
+                        'method': translation_info.get('method', 'AI')
+                    }
+                    if 'note' in translation_info:
+                        response_data['translation_info']['note'] = translation_info['note']
                 
                 # Add simplified sources without citation dependencies
                 sources = result.get('sources', [])
@@ -361,38 +585,39 @@ def create_app():
                             'content_preview': source.get('content_preview', ''),
                             'page': source.get('page', 1),
                             'relevance_score': source.get('relevance_scores', {}).get('hybrid_score', 0),
-                            'key_terms': source.get('key_terms', [])[:3]  # Limit to top 3 key terms
+                            'key_terms': source.get('key_terms', [])[:3],  # Limit to top 3 key terms
+                            'source_type': source.get('source_type', 'document')
                         }
                         simplified_sources.append(simplified_source)
                     response_data['sources'] = simplified_sources
 
-                # Optional: Include cleaned evaluation metrics (without citation dependencies)
-                if include_evaluation:
-                    try:
-                        evaluation = evaluation_service.evaluate_enhanced_rag_response(
-                            query=question,
-                            response=result
-                        )
-                        
-                        # Extract only essential metrics, excluding citation-dependent ones
-                        cleaned_evaluation = {
-                            'overall_score': evaluation.get('overall_metrics', {}).get('overall_rag_score', 0),
-                            'retrieval_score': evaluation.get('overall_metrics', {}).get('retrieval_score', 0),
-                            'generation_score': evaluation.get('overall_metrics', {}).get('generation_score', 0),
-                            'quality_grade': evaluation.get('overall_metrics', {}).get('quality_grade', 'Unknown'),
-                            'key_metrics': {
-                                'answer_relevancy': evaluation.get('generation_metrics', {}).get('answer_relevancy', 0),
-                                'clarity': evaluation.get('generation_metrics', {}).get('clarity', 0),
-                                'coherence': evaluation.get('generation_metrics', {}).get('coherence', 0),
-                                'documents_retrieved': evaluation.get('retrieval_metrics', {}).get('documents_retrieved', 0),
-                                'retrieval_depth': evaluation.get('retrieval_metrics', {}).get('retrieval_depth', 0)
-                            }
-                        }
-                        response_data['evaluation'] = cleaned_evaluation
-                        
-                    except Exception as eval_error:
-                        logger.warning(f"Evaluation failed: {str(eval_error)}")
-                        response_data['evaluation_error'] = str(eval_error)
+                # Optional: Include cleaned evaluation metrics (disabled for now)
+                # if include_evaluation:
+                #     try:
+                #         evaluation = evaluation_service.evaluate_enhanced_rag_response(
+                #             query=question,
+                #             response=result
+                #         )
+                #         
+                #         # Extract only essential metrics, excluding citation-dependent ones
+                #         cleaned_evaluation = {
+                #             'overall_score': evaluation.get('overall_metrics', {}).get('overall_rag_score', 0),
+                #             'retrieval_score': evaluation.get('overall_metrics', {}).get('retrieval_score', 0),
+                #             'generation_score': evaluation.get('overall_metrics', {}).get('generation_score', 0),
+                #             'quality_grade': evaluation.get('overall_metrics', {}).get('quality_grade', 'Unknown'),
+                #             'key_metrics': {
+                #                 'answer_relevancy': evaluation.get('generation_metrics', {}).get('answer_relevancy', 0),
+                #                 'clarity': evaluation.get('generation_metrics', {}).get('clarity', 0),
+                #                 'coherence': evaluation.get('generation_metrics', {}).get('coherence', 0),
+                #                 'documents_retrieved': evaluation.get('retrieval_metrics', {}).get('documents_retrieved', 0),
+                #                 'retrieval_depth': evaluation.get('retrieval_metrics', {}).get('retrieval_depth', 0)
+                #             }
+                #         }
+                #         response_data['evaluation'] = cleaned_evaluation
+                #         
+                #     except Exception as eval_error:
+                #         logger.warning(f"Evaluation failed: {str(eval_error)}")
+                #         response_data['evaluation_error'] = str(eval_error)
 
                 # V2 compatible response format (but with enhanced data)
                 return jsonify({
@@ -409,11 +634,19 @@ def create_app():
 
         except Exception as e:
             tb_outer = traceback.format_exc()
-            logger.error(f"Answer question error: {str(e)}\n{tb_outer}")
+            
+            # Enhanced error logging for debugging
+            logger.error(f"Question processing failed for session {session_id[:8]}...: {str(e)}")
+            
             return jsonify({
                 'success': False,
                 'status': 500,
-                'errors': [f'Failed to process question: {str(e)}', tb_outer]
+                'errors': [f'Failed to process question: {str(e)}'],
+                'debug_info': {
+                    'error_type': type(e).__name__,
+                    'session_exists': session_id in sessions if session_id else False,
+                    'question_length': len(question) if question else 0
+                }
             }), 500
     
     @app.route('/sample_questions', methods=['POST'])
@@ -448,20 +681,43 @@ def create_app():
                 }), 400
 
             # Check if session exists and retrieve the specific HybridRAGService instance
-            if session_id not in sessions:
-                return jsonify({
-                    'success': False,
-                    'status': 400,
-                    'errors': ['Invalid session']
-                }), 400
-            
-            session_data = sessions[session_id]
-            rag_service = session_data['rag_service']
+            validation = validate_session(session_id, sessions, require_rag_service=True)
+            if not validation['valid']:
+                return create_response(False, errors=[validation['error']], status=validation['status'])
+
+            rag_service = validation['session_data']['rag_service']
             
             # Generate sample questions using enhanced RAG capabilities
             try:
                 # Get document chunks for sample generation
-                chunks = rag_service.get_document_chunks(file_id, limit=5)
+                try:
+                    # Get document chunks for sample generation using scroll method
+                    from qdrant_client.http import models
+                    
+                    scroll_result = rag_service.qdrant_client.scroll(
+                        collection_name=rag_service.config_manager.get('COLLECTION_NAME'),
+                        scroll_filter=models.Filter(
+                            must=[
+                                models.FieldCondition(key="file_id", match=models.MatchValue(value=file_id)),
+                                models.FieldCondition(key="is_metadata", match=models.MatchValue(value=False))
+                            ]
+                        ),
+                        limit=5,
+                        with_payload=True,
+                        with_vectors=False
+                    )
+                    
+                    # Convert to Document objects
+                    chunks = []
+                    for point in scroll_result[0]:
+                        chunks.append(type('Document', (), {
+                            'page_content': point.payload.get('content', ''),
+                            'metadata': point.payload
+                        })())
+                        
+                except Exception as e:
+                    logger.error(f"Error retrieving chunks: {str(e)}")
+                    chunks = []
                 
                 if not chunks:
                     return jsonify({
@@ -476,13 +732,7 @@ def create_app():
                 # Format as numbered list (V2 compatibility)
                 formatted_questions = [f"{i+1}. {q}" for i, q in enumerate(sample_questions[:5])]
                 
-                return jsonify({
-                    'success': True,
-                    'status': 200,
-                    'data': [{
-                        'answer': formatted_questions
-                    }]
-                }), 200
+                return create_response(True, data=[{'answer': formatted_questions}])
                 
             except Exception as e:
                 logger.error(f"Sample question generation error: {str(e)}")
@@ -535,12 +785,9 @@ def create_app():
                 }), 400
             
             # Check if session exists
-            if session_id not in sessions:
-                return jsonify({
-                    'success': False,
-                    'status': 400,
-                    'errors': ['Invalid session']
-                }), 400
+            validation = validate_session(session_id, sessions, require_rag_service=True)
+            if not validation['valid']:
+                return create_response(False, errors=[validation['error']], status=validation['status'])
             
             # Check if new file is provided
             if 'new_files' not in request.files:
@@ -663,12 +910,9 @@ def create_app():
                 }), 400
             
             # Check if session exists
-            if session_id not in sessions:
-                return jsonify({
-                    'success': False,
-                    'status': 400,
-                    'errors': ['Selected file(s) do not exist']
-                }), 400
+            validation = validate_session(session_id, sessions, require_rag_service=True)
+            if not validation['valid']:
+                return create_response(False, errors=[validation['error']], status=validation['status'])
 
             rag_service = sessions[session_id]['rag_service']
             deleted_count = 0
@@ -745,108 +989,86 @@ def create_app():
                 'errors': [f'Failed to get session info: {str(e)}']
             }), 500
     
-    @app.route('/evaluate_response', methods=['POST'])
-    @verify_jwt_token
-    def evaluate_response():
-        """
-        Comprehensive RAG response evaluation with hit rate, precision, recall, 
-        and advanced retrieval/generation metrics
-        """
-        try:
-            data = request.get_json()
-            
-            if not data:
-                return ResponseFormatter.error_response(
-                    "No JSON data provided",
-                    status=400
-                )
-            
-            query = data.get('query')
-            response = data.get('response')
-            ground_truth = data.get('ground_truth')
-            relevant_docs = data.get('relevant_docs')
-            
-            if not query or not response:
-                return ResponseFormatter.validation_error(
-                    errors=['Query and response are required'],
-                    message="Missing required fields for evaluation"
-                )
-            
-            # Perform comprehensive evaluation
-            evaluation = evaluation_service.evaluate_enhanced_rag_response(
-                query=query,
-                response=response,
-                ground_truth=ground_truth,
-                relevant_docs=relevant_docs
-            )
-            
-            # Enhance response with metric explanations
-            enhanced_evaluation = {
-                **evaluation,
-                'metrics_explanation': {
-                    'retrieval_metrics': {
-                        'hit_rate': 'Percentage of queries where at least one relevant document was retrieved',
-                        'precision_at_k': 'Fraction of retrieved documents that are relevant',
-                        'recall_at_k': 'Fraction of relevant documents that were retrieved',
-                        'f1_at_k': 'Harmonic mean of precision and recall',
-                        'mrr': 'Mean Reciprocal Rank - position of first relevant document',
-                        'ndcg_at_k': 'Normalized Discounted Cumulative Gain - ranking quality metric'
-                    },
-                    'generation_metrics': {
-                        'semantic_similarity': 'Semantic similarity to ground truth answer',
-                        'bleu_score': 'BLEU score comparing n-gram overlap with ground truth',
-                        'rouge_scores': 'ROUGE-1, ROUGE-2, ROUGE-L for different text overlap measures',
-                        'content_precision': 'Precision of content words compared to ground truth',
-                        'content_recall': 'Recall of content words compared to ground truth',
-                        'factual_accuracy': 'Accuracy of factual claims compared to ground truth'
-                    }
-                },
-                'evaluation_summary': {
-                    'overall_score': evaluation.get('overall_metrics', {}).get('overall_rag_score', 0),
-                    'retrieval_score': evaluation.get('overall_metrics', {}).get('retrieval_score', 0),
-                    'generation_score': evaluation.get('overall_metrics', {}).get('generation_score', 0),
-                    'quality_grade': evaluation.get('overall_metrics', {}).get('quality_grade', 'Unknown')
-                }
-            }
-            
-            return ResponseFormatter.success_response(
-                data=enhanced_evaluation,
-                message="RAG response evaluation completed successfully"
-            )
-            
-        except Exception as e:
-            logger.error(f"Evaluation error: {str(e)}")
-            return ResponseFormatter.error_response(
-                f"Evaluation failed: {str(e)}",
-                status=500
-            )
+    # @app.route('/evaluate_response', methods=['POST'])
+    # @verify_jwt_token
+    # def evaluate_response():
+    #     """
+    #     Comprehensive RAG response evaluation with hit rate, precision, recall, 
+    #     and advanced retrieval/generation metrics
+    #     """
+    #     try:
+    #         data = request.get_json()
+    #         
+    #         if not data:
+    #             return create_response(False, errors=['No JSON data provided'], status=400)
+    #         
+    #         query = data.get('query')
+    #         response = data.get('response')
+    #         ground_truth = data.get('ground_truth')
+    #         relevant_docs = data.get('relevant_docs')
+    #         
+    #         if not query or not response:
+    #             return create_response(False, errors=['Query and response are required'], status=400)
+    #         
+    #         # Perform comprehensive evaluation
+    #         evaluation = evaluation_service.evaluate_enhanced_rag_response(
+    #             query=query,
+    #             response=response,
+    #             ground_truth=ground_truth,
+    #             relevant_docs=relevant_docs
+    #         )
+    #         
+    #         # Enhance response with metric explanations
+    #         enhanced_evaluation = {
+    #             **evaluation,
+    #             'metrics_explanation': {
+    #                 'retrieval_metrics': {
+    #                     'hit_rate': 'Percentage of queries where at least one relevant document was retrieved',
+    #                     'precision_at_k': 'Fraction of retrieved documents that are relevant',
+    #                     'recall_at_k': 'Fraction of relevant documents that were retrieved',
+    #                     'f1_at_k': 'Harmonic mean of precision and recall',
+    #                     'mrr': 'Mean Reciprocal Rank - position of first relevant document',
+    #                     'ndcg_at_k': 'Normalized Discounted Cumulative Gain - ranking quality metric'
+    #                 },
+    #                 'generation_metrics': {
+    #                     'semantic_similarity': 'Semantic similarity to ground truth answer',
+    #                     'bleu_score': 'BLEU score comparing n-gram overlap with ground truth',
+    #                     'rouge_scores': 'ROUGE-1, ROUGE-2, ROUGE-L for different text overlap measures',
+    #                     'content_precision': 'Precision of content words compared to ground truth',
+    #                     'content_recall': 'Recall of content words compared to ground truth',
+    #                     'factual_accuracy': 'Accuracy of factual claims compared to ground truth'
+    #                 }
+    #             },
+    #             'evaluation_summary': {
+    #                 'overall_score': evaluation.get('overall_metrics', {}).get('overall_rag_score', 0),
+    #                 'retrieval_score': evaluation.get('overall_metrics', {}).get('retrieval_score', 0),
+    #                 'generation_score': evaluation.get('overall_metrics', {}).get('generation_score', 0),
+    #                 'quality_grade': evaluation.get('overall_metrics', {}).get('quality_grade', 'Unknown')
+    #             }
+    #         }
+    #         
+    #         return create_response(True, data=enhanced_evaluation, message="Evaluation completed successfully")
+
+    #         
+    #     except Exception as e:
+    #         logger.error(f"Evaluation error: {str(e)}")
+    #         return create_response(False, errors=['No JSON data provided'], status=400)
     
     @app.route('/health_check', methods=['GET'])
     def health_check():
         """Enhanced health check"""
         try:
             # Basic health info
-            health_info = {
-                'success': True,
-                'status': 200,
-                'message': 'XplorEase V2 Compatible Enhanced RAG API Server is running',
+            active_sessions = len(sessions)
+            total_files = sum(len(s.get('files', [])) for s in sessions.values())
+
+            return create_response(True, data={
                 'timestamp': datetime.now().isoformat(),
                 'version': '2.0.0-enhanced',
-                'features': {
-                    'document_processing': True,
-                    'enhanced_rag': True,
-                    'citations': True,
-                    'verification': True,
-                    'reranking': True,
-                    'evaluation': True
-                },
-                'statistics': {
-                    'active_sessions': len(sessions),
-                    'total_files_processed': sum(len(session.get('files', [])) for session in sessions.values())
-                }
-            }
-            
-            return jsonify(health_info), 200
+                'active_sessions': active_sessions,
+                'total_files_processed': total_files,
+                'features_enabled': ['enhanced_rag', 'ocr_processing', 'multi_format_support']
+            }, message="Service is running")
             
         except Exception as e:
             logger.error(f"Health check error: {str(e)}")
