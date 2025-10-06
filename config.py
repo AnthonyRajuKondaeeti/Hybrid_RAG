@@ -15,6 +15,10 @@ class Config:
     QDRANT_API_KEY = os.getenv('QDRANT_API_KEY')
     COLLECTION_NAME = os.getenv('COLLECTION_NAME', 'document_chunks')
     
+    # MongoDB Configuration
+    MONGODB_URL = os.getenv('MONGODB_URL')
+    DB_NAME = os.getenv('DB_NAME', 'Xplorease_db')
+    
     # Flask Configuration
     UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'uploads')
     MAX_CONTENT_LENGTH = int(os.getenv('MAX_CONTENT_LENGTH', 50 * 1024 * 1024))  # 50MB
@@ -61,9 +65,11 @@ class Config:
     ENABLE_OCR = os.getenv('ENABLE_OCR', 'true').lower() == 'true'
     ENABLE_IMAGE_ANALYSIS = os.getenv('ENABLE_IMAGE_ANALYSIS', 'true').lower() == 'true'
     ENABLE_CONVERSATION_MEMORY = os.getenv('ENABLE_CONVERSATION_MEMORY', 'true').lower() == 'true'
-    OCR_LANGUAGES = os.getenv('OCR_LANGUAGES', 'en').split(',')
+    # Enhanced OCR configuration - English only for simplicity
+    # Non-English text will be handled with appropriate messaging
+    OCR_LANGUAGES = os.getenv('OCR_LANGUAGES', 'en').split(',')  # English only
     OCR_GPU_ENABLED = os.getenv('OCR_GPU_ENABLED', 'false').lower() == 'true'
-    OCR_CONFIDENCE_THRESHOLD = float(os.getenv('OCR_CONFIDENCE_THRESHOLD', 0.5))
+    OCR_CONFIDENCE_THRESHOLD = float(os.getenv('OCR_CONFIDENCE_THRESHOLD', 0.3))  # Lowered for better quote detection
     OCR_PREPROCESSING = os.getenv('OCR_PREPROCESSING', 'true').lower() == 'true'
     
     # Conversation Memory Settings
@@ -110,15 +116,38 @@ class Config:
     RETRY_EXPONENTIAL_BASE = float(os.getenv('RETRY_EXPONENTIAL_BASE', 2.0))
     RETRY_MAX_DELAY = float(os.getenv('RETRY_MAX_DELAY', 60.0))
     
+    # Legacy variable names for backward compatibility with xplorease_main_v2
+    SECRET_KEY = JWT_SECRET  # Flask secret key
+    DB = DB_NAME  # Database name
+    SERVER_PORT = PORT  # Server port
+    EMBEDDING_DIMENSIONS = 384  # For all-MiniLM-L6-v2 model
+    
     @staticmethod
     def validate():
-        required_vars = ['MISTRAL_API_KEY', 'QDRANT_URL', 'QDRANT_API_KEY']
+        required_vars = ['MISTRAL_API_KEY', 'QDRANT_URL', 'QDRANT_API_KEY', 'MONGODB_URL']
         missing = [var for var in required_vars if not os.getenv(var)]
         if missing:
             raise ValueError(f"Missing required environment variables: {missing}")
+        
+        # Validate MongoDB URL format
+        mongodb_url = os.getenv('MONGODB_URL')
+        if mongodb_url and not mongodb_url.startswith(('mongodb://', 'mongodb+srv://')):
+            raise ValueError("MONGODB_URL must start with 'mongodb://' or 'mongodb+srv://'")
         
         # Validate chunk size
         chunk_size = int(os.getenv('CHUNK_SIZE', 300))
         chunk_overlap = int(os.getenv('CHUNK_OVERLAP', 50))
         if chunk_overlap >= chunk_size:
             raise ValueError("CHUNK_OVERLAP must be less than CHUNK_SIZE")
+
+# Create module-level variables for backward compatibility
+SECRET_KEY = Config.JWT_SECRET
+DB = Config.DB_NAME
+SERVER_PORT = Config.PORT
+QDRANT_URL = Config.QDRANT_URL
+QDRANT_API_KEY = Config.QDRANT_API_KEY
+MONGODB_URL = Config.MONGODB_URL
+MISTRAL_API_KEY = Config.MISTRAL_API_KEY
+MISTRAL_MODEL = Config.MISTRAL_MODEL
+COLLECTION_NAME = Config.COLLECTION_NAME
+EMBEDDING_DIMENSIONS = 384

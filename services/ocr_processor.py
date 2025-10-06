@@ -11,6 +11,7 @@ from io import BytesIO
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 import fitz  # PyMuPDF
+import re
 
 from config import Config
 
@@ -80,7 +81,7 @@ class OCRProcessor:
         return self.ocr_initialized and self.reader is not None
     
     def preprocess_image(self, image: np.ndarray) -> np.ndarray:
-        """Preprocess image for better OCR results."""
+        """Enhanced preprocessing for better OCR results with Indian languages."""
         if not Config.OCR_PREPROCESSING:
             return image
         
@@ -91,18 +92,59 @@ class OCRProcessor:
             else:
                 gray = image
             
-            # Apply adaptive thresholding to improve text contrast
+            # Enhance contrast using CLAHE (good for varied lighting)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            enhanced = clahe.apply(gray)
+            
+            # Apply adaptive thresholding with more aggressive settings for Indian scripts
             processed = cv2.adaptiveThreshold(
-                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+                enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 10
             )
+            
+            # Morphological operations to clean up text
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 1))
+            processed = cv2.morphologyEx(processed, cv2.MORPH_CLOSE, kernel)
             
             # Denoise
             processed = cv2.medianBlur(processed, 3)
             
+            logger.debug("Applied enhanced preprocessing for Indian language OCR")
             return processed
         except Exception as e:
-            logger.warning(f"Image preprocessing failed: {str(e)}")
+            logger.warning(f"Enhanced image preprocessing failed: {str(e)}, using original image")
             return image
+    
+    def _detect_non_english_text(self, text: str) -> bool:
+        """Simple detection for non-English text patterns."""
+        if not text or not text.strip():
+            return False
+        
+        # Check for common non-English Unicode ranges
+        # Devanagari (Hindi): U+0900-U+097F
+        # Malayalam: U+0D00-U+0D7F  
+        # Tamil: U+0B80-U+0BFF
+        # Telugu: U+0C00-U+0C7F
+        # Gujarati: U+0A80-U+0AFF
+        # Kannada: U+0C80-U+0CFF
+        # Bengali: U+0980-U+09FF
+        # Punjabi: U+0A00-U+0A7F
+        non_english_patterns = [
+            r'[\u0900-\u097F]',  # Devanagari (Hindi)
+            r'[\u0D00-\u0D7F]',  # Malayalam
+            r'[\u0B80-\u0BFF]',  # Tamil
+            r'[\u0C00-\u0C7F]',  # Telugu
+            r'[\u0A80-\u0AFF]',  # Gujarati
+            r'[\u0C80-\u0CFF]',  # Kannada
+            r'[\u0980-\u09FF]',  # Bengali
+            r'[\u0A00-\u0A7F]',  # Punjabi
+            r'[\u0980-\u09FF]',  # Odia
+        ]
+        
+        for pattern in non_english_patterns:
+            if re.search(pattern, text):
+                return True
+        
+        return False
     
     def perform_ocr_on_image(self, image_data) -> Dict[str, Any]:
         """Perform OCR on image data (PIL Image, numpy array, or bytes)."""
@@ -140,24 +182,53 @@ class OCRProcessor:
             # Perform OCR
             ocr_results = self.reader.readtext(processed_image)
             
-            # Extract text and confidence scores
+            # Extract text and confidence scores with more tolerance for Indian languages
             extracted_texts = []
             confidence_scores = []
+            all_texts = []  # Keep track of all detected text for debugging
             
             for (bbox, text, confidence) in ocr_results:
+                all_texts.append(f"{text}({confidence:.3f})")
+                # More lenient threshold for Indian languages
                 if confidence >= self.confidence_threshold:
+                    extracted_texts.append(text)
+                    confidence_scores.append(confidence)
+                elif confidence >= 0.2 and len(text.strip()) > 1:  # Very low threshold for short meaningful text
                     extracted_texts.append(text)
                     confidence_scores.append(confidence)
             
             full_text = " ".join(extracted_texts)
             avg_confidence = np.mean(confidence_scores) if confidence_scores else 0.0
             
+            # Check for non-English text and provide appropriate messaging
+            contains_non_english = self._detect_non_english_text(full_text)
+            
+            # Enhanced logging for debugging
+            logger.info(f"OCR detected {len(ocr_results)} text regions, {len(extracted_texts)} above threshold")
+            if not extracted_texts and all_texts:
+                logger.warning(f"All detected texts below threshold: {all_texts}")
+            
+            # If non-English text detected, provide appropriate message
+            if contains_non_english:
+                logger.info("Non-English text detected in OCR result")
+                return {
+                    "success": True,
+                    "text": "This image contains non-English text. Currently, only English text processing is supported. Please provide images with English text for optimal results.",
+                    "confidence": float(avg_confidence),
+                    "word_count": 0,
+                    "processed_at": datetime.now().isoformat(),
+                    "non_english_detected": True,
+                    "debug_all_detections": all_texts[:5]
+                }
+            
             return {
                 "success": True,
                 "text": full_text,
                 "confidence": float(avg_confidence),
                 "word_count": len(extracted_texts),
-                "processed_at": datetime.now().isoformat()
+                "processed_at": datetime.now().isoformat(),
+                "non_english_detected": False,
+                "debug_all_detections": all_texts[:5]  # First 5 detections for debugging
             }
             
         except Exception as e:

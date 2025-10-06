@@ -150,7 +150,11 @@ class DocumentService:
                 }
             
             text_content = ocr_result['text']
-            if text_content and text_content.strip():
+            confidence = ocr_result.get('confidence', 0.0)
+            
+            # More lenient text validation - accept any text with confidence > 0.1
+            if text_content and len(text_content.strip()) > 0 and confidence > 0.1:
+                logger.info(f"OCR extracted text (confidence: {confidence:.3f}): '{text_content[:100]}...' from {filepath}")
                 metadata = {
                     'page': 1,
                     'source': filepath,
@@ -167,6 +171,8 @@ class DocumentService:
                     'method': 'easyocr'
                 }
             
+            # Enhanced error message with debug info
+            logger.warning(f"OCR result: text='{text_content}', confidence={confidence}, length={len(text_content) if text_content else 0}")
             return {
                 'success': False,
                 'error': 'No text found in image'
@@ -616,8 +622,14 @@ class DocumentService:
                             for i in range(0, len(processed_content), chunk_size)]
             
             for i, chunk_content in enumerate(base_chunks):
-                # Skip very small chunks (likely noise)
-                if len(chunk_content.strip()) < 50:
+                # Detect content type first to apply appropriate filtering
+                content_type = self._detect_content_type(chunk_content)
+                
+                # Apply different minimum length thresholds based on content type
+                min_length = 10 if content_type == 'quote' else 50
+                
+                # Skip very small chunks (likely noise) unless it's a quote
+                if len(chunk_content.strip()) < min_length:
                     continue
                 
                 # Create enhanced metadata for each chunk
@@ -629,7 +641,7 @@ class DocumentService:
                     'chunk_index': i,
                     'semantic_score': self._calculate_semantic_score(chunk_content),
                     'content_density': len(chunk_content.split()) / len(chunk_content),
-                    'content_type': self._detect_content_type(chunk_content),
+                    'content_type': content_type,  # Use the already detected content type
                     'key_terms': ', '.join(self._extract_key_terms(chunk_content)[:5]),
                     'chunk_created_at': datetime.now().isoformat(),
                 })
@@ -735,6 +747,7 @@ class DocumentService:
         
         # Define keyword patterns for each content type
         type_patterns = {
+            'quote': ['"', "'", 'said', 'quote', 'quotation', '–', '—', 'author', 'writer'],
             'introduction': ['introduction', 'background', 'overview'],
             'methodology': ['method', 'methodology', 'approach', 'procedure'],
             'results': ['result', 'finding', 'outcome', 'data', 'analysis'],
@@ -743,6 +756,12 @@ class DocumentService:
             'references': ['reference', 'bibliography', 'citation'],
             'technical': ['algorithm', 'formula', 'equation', 'implementation'],
         }
+        
+        # Special handling for quotes - check for quote patterns
+        if (text.count('"') >= 2 or text.count("'") >= 2 or 
+            any(pattern in text_lower for pattern in ['said', 'quote', 'quotation']) or
+            text.count('–') >= 1 or text.count('—') >= 1):
+            return 'quote'
         
         # Check for pattern matches
         for content_type, keywords in type_patterns.items():

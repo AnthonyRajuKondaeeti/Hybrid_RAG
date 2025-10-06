@@ -1012,7 +1012,8 @@ class EnhancedRAGService:
             timeout=60,  # Increased timeout for cloud connections
             prefer_grpc=False,  # Use HTTP for better compatibility with cloud
             https=True,  # Ensure HTTPS is used
-            verify=True  # Verify SSL certificates
+            verify=True,  # Verify SSL certificates
+            check_compatibility=False  # Skip version check to avoid warnings
         )
         self._test_qdrant_connection()
         logger.info("Qdrant client initialized successfully")
@@ -1022,8 +1023,9 @@ class EnhancedRAGService:
             model=self.config_manager.get('MISTRAL_MODEL'),
             temperature=0.1,
             api_key=self.config_manager.get('MISTRAL_API_KEY'),
-            timeout=60,
-            max_retries=3
+            timeout=self.config_manager.get('RESPONSE_TIMEOUT', 120),
+            max_retries=3,
+            max_tokens=self.config_manager.get('MAX_TOKENS', 4000)
         )
         logger.info("Mistral LLM initialized successfully")
     
@@ -1695,6 +1697,18 @@ Please provide a brief summary of what information is available."""
             elif conversation_history:
                 context_section = self._build_history_context(conversation_history)
             
+            # Detect if this is a comprehensive question that needs longer response
+            is_comprehensive_query = any(word in question.lower() for word in [
+                'all', 'list', 'series', 'range', 'types', 'found', 'combine', 'complement', 
+                'across', 'multiple', 'various', 'comprehensive', 'detailed', 'explain',
+                'top 5', 'top 10', 'best 5', 'best 10', 'suggest', 'recommend', 'compare',
+                'which', 'what are', 'how many', 'several', 'different', 'options'
+            ]) or any(pattern in question.lower() for pattern in [
+                'top ', 'best ', 'suggest', 'recommend', 'compare', 'vs ', 'versus'
+            ])
+            
+            logger.info(f"Question: '{question}' - Comprehensive query detected: {is_comprehensive_query}")
+            
             # Create prompt
             prompt = self._create_answer_prompt(question, context_str, context_section)
             
@@ -1707,7 +1721,8 @@ Please provide a brief summary of what information is available."""
                 logger.warning("LLM returned minimal response, likely due to API capacity issues")
                 raise Exception("LLM returned minimal response - possible API capacity issue")
             
-            answer = self._post_process_answer(answer_content, search_results)
+            # Post-process with appropriate length limits
+            answer = self._post_process_answer(answer_content, search_results, is_comprehensive_query)
             
             return {
                 'success': True,
@@ -1780,19 +1795,28 @@ Please provide a brief summary of what information is available."""
     
     def _create_answer_prompt(self, question: str, context_str: str, context_section: str = "") -> str:
         """Create the answer prompt for the LLM"""
-        # Detect if this is a comprehensive listing question
-        is_listing_query = any(word in question.lower() for word in ['all', 'list', 'series', 'range', 'types', 'found'])
+        # Detect if this is a comprehensive listing or recommendation question
+        is_listing_query = any(word in question.lower() for word in [
+            'all', 'list', 'series', 'range', 'types', 'found', 'combine', 'complement', 
+            'across', 'multiple', 'various', 'comprehensive', 'detailed', 'explain',
+            'top 5', 'top 10', 'best 5', 'best 10', 'suggest', 'recommend', 'compare',
+            'which', 'what are', 'how many', 'several', 'different', 'options'
+        ]) or any(pattern in question.lower() for pattern in [
+            'top ', 'best ', 'suggest', 'recommend', 'compare', 'vs ', 'versus'
+        ])
         
         if is_listing_query:
             return f"""You are an expert document analyst. Answer the question using ALL the provided sources comprehensively.
 
-INSTRUCTIONS FOR COMPREHENSIVE LISTING:
+INSTRUCTIONS FOR COMPREHENSIVE RESPONSE:
 1. SCAN ALL SOURCES carefully for complete information
-2. LIST ALL series, types, models, or categories mentioned across ALL sources
-3. Do NOT miss or omit any series/types found in the sources
-4. Group similar information together
-5. If multiple sources mention the same series, consolidate the information
-6. Be thorough and complete - this is a comprehensive listing request
+2. For listing questions: LIST ALL series, types, models, or categories mentioned across ALL sources
+3. For recommendation questions: PROVIDE DETAILED recommendations with complete specifications and features
+4. Do NOT miss or omit any relevant information found in the sources
+5. Group similar information together and provide complete details
+6. If multiple sources mention the same item, consolidate the information
+7. Be thorough and complete - provide full details for each item
+8. Include specifications, features, and key differentiators
 
 {context_section}
 
@@ -1801,7 +1825,7 @@ SOURCES:
 
 QUESTION: {question}
 
-Provide a COMPLETE and COMPREHENSIVE answer that includes ALL series/types found in the sources:"""
+Provide a COMPLETE and COMPREHENSIVE answer with full details:"""
         else:
             # Use existing prompt for regular questions
             return f"""You are an expert document analyst. Answer the question using ONLY the provided sources.
@@ -2063,7 +2087,7 @@ Provide a concise, direct answer (maximum 3-4 sentences):"""
         else:
             return "I couldn't find relevant information to answer your question."
     
-    def _post_process_answer(self, answer: str, search_results: List[SearchResult]) -> str:
+    def _post_process_answer(self, answer: str, search_results: List[SearchResult], is_comprehensive: bool = False) -> str:
         """Post-process answer for quality and consistency"""
         # Remove markdown formatting
         answer = re.sub(r'\*\*([^*]+)\*\*', r'\1', answer)
@@ -2072,10 +2096,20 @@ Provide a concise, direct answer (maximum 3-4 sentences):"""
         # Clean spacing
         answer = re.sub(r'\s+', ' ', answer).strip()
         
-        # Limit to 4 sentences
-        sentences = answer.split('. ')
-        if len(sentences) > 4:
-            answer = '. '.join(sentences[:4]) + '.'
+        # Apply length limits based on question type
+        if not is_comprehensive:
+            # Limit sentences for regular questions
+            max_sentences = self.config_manager.get('REGULAR_ANSWER_MAX_SENTENCES', 4)
+            sentences = answer.split('. ')
+            if len(sentences) > max_sentences:
+                answer = '. '.join(sentences[:max_sentences]) + '.'
+        else:
+            # For comprehensive questions, allow much longer responses
+            max_sentences = self.config_manager.get('COMPREHENSIVE_ANSWER_MAX_SENTENCES', 20)
+            sentences = answer.split('. ')
+            if len(sentences) > max_sentences:
+                logger.warning(f"Very long answer ({len(sentences)} sentences), truncating to {max_sentences}")
+                answer = '. '.join(sentences[:max_sentences]) + '.'
         
         # Ensure proper ending
         if answer and not answer.endswith(('.', '!', '?')):
