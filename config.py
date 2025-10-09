@@ -10,6 +10,11 @@ class Config:
     MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
     MISTRAL_MODEL = os.getenv('MISTRAL_MODEL', 'mistral-small-latest')
     
+    # LLM Generation Parameters
+    MAX_TOKENS = int(os.getenv('MAX_TOKENS', 2048))  # Prevent answer truncation
+    TEMPERATURE = float(os.getenv('TEMPERATURE', 0.3))  # Control response creativity
+    TOP_P = float(os.getenv('TOP_P', 0.9))  # Nucleus sampling parameter
+    
     # Qdrant Configuration
     QDRANT_URL = os.getenv('QDRANT_URL')
     QDRANT_API_KEY = os.getenv('QDRANT_API_KEY')
@@ -40,8 +45,8 @@ class Config:
     RERANKER_MODEL = os.getenv('RERANKER_MODEL', 'cross-encoder/ms-marco-MiniLM-L-6-v2')
     VERIFIER_MODEL = os.getenv('VERIFIER_MODEL', 'cross-encoder/nli-deberta-v3-base')
     
-    CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', 300))
-    CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP', 50))
+    CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', 800))  # Increased from 300 for better content analysis
+    CHUNK_OVERLAP = int(os.getenv('CHUNK_OVERLAP', 100))  # Increased proportionally
     RETRIEVAL_K = int(os.getenv('RETRIEVAL_K', 20))
     RERANK_TOP_K = int(os.getenv('RERANK_TOP_K', 8))
     MAX_CONVERSATION_HISTORY = int(os.getenv('MAX_CONVERSATION_HISTORY', 10))
@@ -135,8 +140,8 @@ class Config:
             raise ValueError("MONGODB_URL must start with 'mongodb://' or 'mongodb+srv://'")
         
         # Validate chunk size
-        chunk_size = int(os.getenv('CHUNK_SIZE', 300))
-        chunk_overlap = int(os.getenv('CHUNK_OVERLAP', 50))
+        chunk_size = int(os.getenv('CHUNK_SIZE', 800))
+        chunk_overlap = int(os.getenv('CHUNK_OVERLAP', 100))
         if chunk_overlap >= chunk_size:
             raise ValueError("CHUNK_OVERLAP must be less than CHUNK_SIZE")
 
@@ -151,3 +156,8 @@ MISTRAL_API_KEY = Config.MISTRAL_API_KEY
 MISTRAL_MODEL = Config.MISTRAL_MODEL
 COLLECTION_NAME = Config.COLLECTION_NAME
 EMBEDDING_DIMENSIONS = 384
+
+# LLM Generation Parameters (new)
+MAX_TOKENS = Config.MAX_TOKENS
+TEMPERATURE = Config.TEMPERATURE
+TOP_P = Config.TOP_P

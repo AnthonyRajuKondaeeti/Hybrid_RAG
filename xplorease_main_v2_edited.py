@@ -307,8 +307,18 @@ def generate_contextual_questions_from_chunks(chunks):
 def generate_sample_questions_from_chunks(rag_service, chunks):
     """Generate sample questions from chunks with fallback strategies"""
     try:
+        logger.info(f"Attempting to generate questions from {len(chunks) if chunks else 0} chunks")
+        
+        # Debug: Log chunk content previews
+        if chunks:
+            for i, chunk in enumerate(chunks[:3]):
+                content_preview = chunk.page_content[:150] if hasattr(chunk, 'page_content') else str(chunk)[:150]
+                logger.debug(f"Chunk {i+1} preview: {content_preview}...")
+        
         # Try LLM-based question generation first
         questions = rag_service.generate_sample_questions(chunks)
+        
+        logger.info(f"RAG service returned {len(questions) if questions else 0} questions")
         
         # Clean each question and add proper numbering
         cleaned_questions = []
@@ -714,12 +724,36 @@ def process_file():  # Removed current_user parameter since JWT is disabled
         # Generate automatic sample questions after successful file processing
         sample_questions = []
         try:
-            # Use the same successful search mechanism as generate_sample_questions endpoint
-            search_results = rag_service._search_with_file_filter("overview summary content", session_text)
+            # Try multiple search strategies to get better content for questions
+            search_queries = [
+                "main topic introduction abstract summary",
+                "methodology approach framework research",
+                "conclusion findings results analysis"
+            ]
             
-            if search_results:
+            best_search_results = []
+            for query in search_queries:
+                try:
+                    results = rag_service._search_with_file_filter(query, session_text)
+                    if results:
+                        best_search_results.extend(results[:3])  # Take top 3 from each query
+                except Exception as e:
+                    logger.warning(f"Search query '{query}' failed: {e}")
+                    continue
+            
+            if best_search_results:
+                # Remove duplicates and take best results
+                seen_content = set()
+                unique_results = []
+                for result in best_search_results:
+                    if hasattr(result, 'chunk') and hasattr(result.chunk, 'content'):
+                        content_preview = result.chunk.content[:100]
+                        if content_preview not in seen_content:
+                            seen_content.add(content_preview)
+                            unique_results.append(result)
+                
                 # Convert search results to Document objects for compatibility
-                chunks = convert_search_results_to_documents(search_results)
+                chunks = convert_search_results_to_documents(unique_results[:5])
                 
                 if chunks:
                     sample_questions = generate_sample_questions_from_chunks(rag_service, chunks)
@@ -1006,16 +1040,51 @@ def generate_sample_questions():  # Removed current_user parameter since JWT is 
                 # Get RAG service
                 rag_service = get_or_create_rag_service(session_id, user_name)
                 
-                # Let RAG service handle chunk retrieval internally (same as answer_question)
+                # Let RAG service handle chunk retrieval internally with improved search
                 try:
-                    # Use the same internal search mechanism that works for answer_question
-                    search_results = rag_service._search_with_file_filter("overview summary content", session_text)
+                    # Use multiple search strategies to get better content for questions
+                    search_queries = [
+                        "main topic introduction abstract summary",
+                        "methodology approach framework research",
+                        "conclusion findings results analysis"
+                    ]
                     
-                    if search_results:
+                    logger.info(f"Starting multi-query search for session {session_id}")
+                    best_search_results = []
+                    for query in search_queries:
+                        try:
+                            logger.debug(f"Searching with query: '{query}'")
+                            results = rag_service._search_with_file_filter(query, session_text)
+                            if results:
+                                logger.debug(f"Query '{query}' returned {len(results)} results")
+                                best_search_results.extend(results[:3])  # Take top 3 from each query
+                            else:
+                                logger.debug(f"Query '{query}' returned no results")
+                        except Exception as e:
+                            logger.warning(f"Search query '{query}' failed: {e}")
+                            continue
+                    
+                    logger.info(f"Total search results collected: {len(best_search_results)}")
+                    
+                    if best_search_results:
+                        # Remove duplicates and take best results
+                        seen_content = set()
+                        unique_results = []
+                        for result in best_search_results:
+                            if hasattr(result, 'chunk') and hasattr(result.chunk, 'content'):
+                                content_preview = result.chunk.content[:100]
+                                if content_preview not in seen_content:
+                                    seen_content.add(content_preview)
+                                    unique_results.append(result)
+                                    logger.debug(f"Added unique result: {content_preview[:50]}...")
+                        
+                        logger.info(f"After deduplication: {len(unique_results)} unique results")
+                        
                         # Convert search results to Document objects for compatibility
-                        chunks = convert_search_results_to_documents(search_results)
+                        chunks = convert_search_results_to_documents(unique_results[:5])
                         
                         if chunks:
+                            logger.info(f"Converted to {len(chunks)} document chunks for question generation")
                             questions = generate_sample_questions_from_chunks(rag_service, chunks)
                         else:
                             logger.warning("No chunks retrieved from search results, trying MongoDB fallback")
