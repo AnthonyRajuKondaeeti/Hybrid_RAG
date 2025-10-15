@@ -27,9 +27,30 @@ Thumbs.db
 
 # Logs
 *.log
+app.log
+xplorease_app.log
 
 # Uploaded files
 uploads/
 
 # Static files
 static/
+
+# Test results (keep framework, ignore results)
+rag_testing/test_results/
+**/test_results/
+
+# Temporary test files
+test_*_content.py
+test_*_direct.py
+test_mongodb_atlas.py
+test_pptx_functionality.py
+test_replace_file_questions.py
+
+# Backup files
+*_old.*
+README_old.md
+
+# Development scripts
+restart_with_malayalam.py
+validate_cleanup.py

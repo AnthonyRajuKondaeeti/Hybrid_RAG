@@ -10,10 +10,13 @@ import logging
 import threading
 import time
 import uuid
+import hashlib
 import numpy as np
 from collections import defaultdict, Counter
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
+from types import SimpleNamespace
+from dataclasses import dataclass
 
 from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer, CrossEncoder
@@ -32,26 +35,68 @@ from ..utils.retry_utils import with_retry, performance_timer
 
 logger = logging.getLogger(__name__)
 
+class ErrorResponse:
+    """Standardized error response format"""
+    
+    @staticmethod
+    def create(error_message: str, 
+               error_type: str = 'general_error',
+               retry_recommended: bool = True,
+               context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Create standardized error response"""
+        response = {
+            'success': False,
+            'error': error_message,
+            'error_type': error_type,
+            'retry_recommended': retry_recommended,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        if context:
+            response['context'] = context
+        
+        return response
+
+
+@dataclass
+@dataclass
+class SessionSearchResult:
+    """Lightweight search result for session queries"""
+    chunk: Any
+    dense_score: float
+    sparse_score: float = 0.0
+    rerank_score: float = 0.0
+    combined_score: float = 0.0
+    relevance_rank: int = 0
+    
+    @property
+    def hybrid_score(self) -> float:
+        """Alias for combined_score to maintain compatibility"""
+        return self.combined_score
+
+
 class EnhancedRAGService:
     """Refactored production-ready RAG service"""
     
     _instance = None
     _lock = threading.Lock()
-    _initialized = False
     
-    def __new__(cls, config=None):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-        return cls._instance
-    
+    # Configuration constants
+    MAX_CONTEXT_CHUNKS = 4
+    MAX_SEARCH_RESULTS = 8
+    MIN_CHUNK_LENGTH = 30
+    CONFIDENCE_ADJUSTMENT = 0.85
+    ANSWER_CACHE_SIZE = 50
+    ANSWER_CACHE_TTL = 300  # 5 minutes
+
     def __init__(self, config):
-        if self._initialized:
+        # Check if already initialized
+        if hasattr(self, '_initialized') and self._initialized:
             return
-        
+            
         with self._lock:
-            if self._initialized:
+            # Double-check inside lock
+            if hasattr(self, '_initialized') and self._initialized:
                 return
             
             self.config_manager = ConfigManager(config)
@@ -62,14 +107,27 @@ class EnhancedRAGService:
             self._initialize_clients()
             self._initialize_models()
             self._initialize_services()
-            self._ensure_collection()
             
             # Performance tracking
             self.stats = defaultdict(int)
             self.timing_stats = defaultdict(list)
             
+            # Adaptive threshold cache
+            self.threshold_cache = {}
+            self.cache_lock = threading.Lock() 
+            self.cache_max_size = 100
+            
+            # Answer cache for performance
+            self._answer_cache = {}
+            
+            # Rate limiting for API calls
+            self._last_api_call = 0
+            self._api_call_interval = 1.0  # Minimum 1 second between calls
+            self._rate_limit_lock = threading.Lock()
+            
+            # Mark as initialized LAST
             self._initialized = True
-            logger.info("Enhanced RAG Service initialized successfully")
+            logger.info("Enhanced RAG Service initialized successfully (session-based collections)")
     
     @with_retry()
     def _initialize_clients(self):
@@ -91,17 +149,20 @@ class EnhancedRAGService:
             self._test_qdrant_connection()
             logger.info("Qdrant client initialized successfully")
             
-            # Initialize Mistral LLM
+            # Initialize Mistral LLM with enhanced rate limiting
             self.llm = ChatMistralAI(
                 model=self.config_manager.get('MISTRAL_MODEL'),
                 temperature=self.config_manager.get('TEMPERATURE', 0.3),
                 api_key=self.config_manager.get('MISTRAL_API_KEY'),
                 timeout=self.config_manager.get('RESPONSE_TIMEOUT', 120),
-                max_retries=3,
+                max_retries=5,  # Increased retries for rate limits
                 max_tokens=self.config_manager.get('MAX_TOKENS', 2048),
                 top_p=self.config_manager.get('TOP_P', 0.9)
             )
-            logger.info("Mistral LLM initialized successfully")
+            
+            # Initialize rate limiting for API calls
+            self._init_rate_limiting()
+            logger.info("Mistral LLM initialized successfully with rate limiting")
             
         except ImportError as e:
             logger.error(f"Missing required imports: {e}")
@@ -109,6 +170,12 @@ class EnhancedRAGService:
         except Exception as e:
             logger.error(f"Failed to initialize clients: {e}")
             raise
+    
+    def _init_rate_limiting(self):
+        """Initialize rate limiting for API calls"""
+        self._api_request_times = []
+        self._max_requests_per_minute = 10  # Conservative limit
+        self._request_interval = 60.0 / self._max_requests_per_minute  # 6 seconds between requests
     
     def _initialize_models(self):
         """Initialize ML models with better configuration"""
@@ -201,9 +268,57 @@ class EnhancedRAGService:
             logger.error(f"Qdrant connection failed: {e}")
             raise
     
-    def _ensure_collection(self):
+    def _rate_limited_llm_call(self, prompt, max_retries=3):
+        """Make rate-limited LLM API call with exponential backoff"""
+        import time
+        import random
+        
+        for attempt in range(max_retries):
+            try:
+                # Rate limiting check
+                with self._rate_limit_lock:
+                    current_time = time.time()
+                    
+                    # Clean old request times (older than 1 minute)
+                    self._api_request_times = [t for t in self._api_request_times if current_time - t < 60]
+                    
+                    # Check if we need to wait
+                    if len(self._api_request_times) >= self._max_requests_per_minute:
+                        wait_time = 60 - (current_time - self._api_request_times[0])
+                        if wait_time > 0:
+                            logger.info(f"Rate limit reached, waiting {wait_time:.1f} seconds...")
+                            time.sleep(wait_time)
+                    
+                    # Add request time and make the call
+                    self._api_request_times.append(current_time)
+                
+                # Make the actual API call
+                response = self.llm.invoke(prompt)
+                return response
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                
+                # Check for rate limit errors
+                if any(keyword in error_str for keyword in ['rate', 'limit', '429', 'capacity', 'tier']):
+                    wait_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff with jitter
+                    logger.warning(f"Rate limit hit (attempt {attempt + 1}/{max_retries}), waiting {wait_time:.1f}s...")
+                    
+                    if attempt < max_retries - 1:
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"Rate limit exceeded after {max_retries} attempts")
+                        raise Exception(f"API rate limit exceeded: {e}")
+                else:
+                    # Non-rate-limit error, re-raise immediately
+                    raise e
+        
+        raise Exception(f"Failed to make API call after {max_retries} attempts")
+    
+    def _ensure_collection(self, session_id: str = None):
         """Ensure Qdrant collection exists with proper configuration"""
-        collection_name = self.config_manager.get('COLLECTION_NAME', 'documents')
+        collection_name = self._get_collection_name(session_id)
         
         try:
             # Check if collection exists
@@ -211,14 +326,42 @@ class EnhancedRAGService:
             existing_names = [col.name for col in collections.collections]
             
             if collection_name not in existing_names:
-                logger.info(f"Creating collection: {collection_name}")
+                logger.info(f"Creating session collection: {collection_name}")
                 self._create_collection(collection_name)
             else:
-                logger.info(f"Collection {collection_name} already exists")
+                logger.info(f"Session collection {collection_name} already exists")
                 
         except Exception as e:
             logger.error(f"Failed to ensure collection: {e}")
             raise
+    
+    def _get_collection_name(self, session_id: str = None) -> str:
+        """Generate collection name based on session"""
+        if session_id:
+            # Use session-specific collection: session_abc123
+            safe_session_id = session_id.replace('_', '-').replace(' ', '-')
+            return f"session_{safe_session_id}"
+        else:
+            # Fallback to default collection for backward compatibility
+            return self.config_manager.get('COLLECTION_NAME', 'documents')
+    
+    def delete_session_collection(self, session_id: str) -> bool:
+        """Delete session-specific collection"""
+        try:
+            collection_name = self._get_collection_name(session_id)
+            collections = self.qdrant_client.get_collections()
+            existing_names = [col.name for col in collections.collections]
+            
+            if collection_name in existing_names:
+                self.qdrant_client.delete_collection(collection_name)
+                logger.info(f"Deleted session collection: {collection_name}")
+                return True
+            else:
+                logger.info(f"Session collection {collection_name} does not exist")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to delete session collection: {e}")
+            return False
     
     def _create_collection(self, collection_name: str):
         """Create Qdrant collection with optimized settings"""
@@ -230,25 +373,24 @@ class EnhancedRAGService:
                 size=self.embedding_dim,
                 distance=models.Distance.COSINE
             ),
-            optimizers_config=models.OptimizersConfig(
-                default_segment_number=2,
-                max_segment_size=20000,
-                memmap_threshold=20000,
-                indexing_threshold=20000,
-                flush_interval_sec=5,
-                max_optimization_threads=1
-            ),
-            hnsw_config=models.HnswConfig(
-                m=16,
-                ef_construct=100,
-                full_scan_threshold=10000,
-                max_indexing_threads=0,
-                on_disk=False
-            )
+            optimizers_config={
+                "deleted_threshold": 0.2,
+                "vacuum_min_vector_number": 1000,
+                "default_segment_number": 2,
+                "max_segment_size": 20000,
+                "memmap_threshold": 20000,
+                "indexing_threshold": 20000,
+                "flush_interval_sec": 5,
+                "max_optimization_threads": 1
+            },
+            hnsw_config={
+                "m": 16,
+                "ef_construct": 100,
+                "full_scan_threshold": 10000,
+                "max_indexing_threads": 0,
+                "on_disk": False
+            }
         )
-    
-    # This would continue with the main methods like index_documents, answer_question, etc.
-    # For now, I'll create the entry points and we can expand them as needed
     
     def index_documents(self, documents: List[Dict[str, Any]], 
                        collection_name: str = None) -> Dict[str, Any]:
@@ -259,18 +401,18 @@ class EnhancedRAGService:
     
     @with_retry()
     def store_document_chunks(self, chunks: List[Any], file_id: str, 
-                            document_metadata: Dict[str, Any]) -> Dict[str, Any]:
+                            document_metadata: Dict[str, Any], 
+                            session_id: str = None) -> Dict[str, Any]:
         """Store document with enhanced semantic chunking and error handling"""
         if not self.qdrant_client:
-            return self._create_error_response('Vector database not available', 0)
+            return self._create_storage_error_response(
+                'Vector database not available',
+                context={'file_id': file_id, 'session_id': session_id}
+            )
         
         try:
-            # Import here to avoid circular imports
-            from collections import Counter
-            import uuid
-            import numpy as np
-            from qdrant_client.http import models
-            from datetime import datetime
+            # Ensure session collection exists
+            self._ensure_collection(session_id)
             
             with performance_timer("Document processing", self.timing_stats):
                 # Check if this is an image file
@@ -306,10 +448,10 @@ class EnhancedRAGService:
                 self.search_engine.index_chunks(semantic_chunks)
                 
                 # Store in vector database
-                storage_result = self._store_chunks_in_qdrant(semantic_chunks, file_id, document_metadata)
+                storage_result = self._store_chunks_in_qdrant(semantic_chunks, file_id, document_metadata, session_id)
                 
                 # Store document metadata
-                self._store_document_metadata(file_id, document_metadata)
+                self._store_document_metadata(file_id, document_metadata, session_id)
                 
                 self.stats['documents_processed'] += 1
                 
@@ -326,25 +468,20 @@ class EnhancedRAGService:
                 
         except Exception as e:
             logger.error(f"Document storage failed: {str(e)}")
-            error_type = self._classify_error(str(e))
-            
-            return {
-                'success': False,
-                'error': str(e),
-                'error_type': error_type,
-                'retry_recommended': error_type in ['transient_model_error', 'general_processing_error'],
-                'file_id': file_id
-            }
+            return ErrorResponse.create(
+                error_message=str(e),
+                error_type=self._classify_error(str(e)),
+                context={'file_id': file_id, 'session_id': session_id}
+            )
     
-    def _create_error_response(self, message: str, chunks_processed: int) -> Dict[str, Any]:
-        """Create standardized error response"""
-        return {
-            'status': 'error',
-            'message': message,
-            'chunks_processed': chunks_processed,
-            'success': False,
-            'retry_recommended': True
-        }
+    def _create_storage_error_response(self, message: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Create standardized error response for storage operations"""
+        return ErrorResponse.create(
+            error_message=message,
+            error_type='storage_error',
+            retry_recommended=True,
+            context=context or {}
+        )
     
     def _classify_error(self, error_msg: str) -> str:
         """Classify error type for better handling"""
@@ -360,9 +497,9 @@ class EnhancedRAGService:
             return 'general_processing_error'
     
     def _store_chunks_in_qdrant(self, semantic_chunks: List[SemanticChunk], 
-                               file_id: str, document_metadata: Dict[str, Any]) -> Dict[str, Any]:
+                               file_id: str, document_metadata: Dict[str, Any],
+                               session_id: str = None) -> Dict[str, Any]:
         """Store semantic chunks in Qdrant with batch processing"""
-        import uuid
         from qdrant_client.http import models
         
         points = []
@@ -377,8 +514,8 @@ class EnhancedRAGService:
                     payload=payload
                 ))
         
-        # Batch upload
-        return self._batch_upload_to_qdrant(points)
+        # Batch upload with session-specific collection
+        return self._batch_upload_to_qdrant(points, session_id)
     
     def _create_chunk_payload(self, chunk: SemanticChunk, file_id: str, 
                              document_metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -407,24 +544,23 @@ class EnhancedRAGService:
             'extraction_method': getattr(chunk, 'metadata', {}).get('extraction_method', 'standard')
         }
     
-    def _batch_upload_to_qdrant(self, points: List[Any]) -> Dict[str, Any]:
+    def _batch_upload_to_qdrant(self, points: List[Any], session_id: str = None) -> Dict[str, Any]:
         """Upload points to Qdrant in batches"""
-        import time
-        
+        collection_name = self._get_collection_name(session_id)
         start_time = time.time()
         batch_size = 100
         total_batches = (len(points) + batch_size - 1) // batch_size
         
-        logger.info(f"Uploading {len(points)} points to Qdrant in {total_batches} batches...")
+        logger.info(f"Uploading {len(points)} points to collection '{collection_name}' in {total_batches} batches...")
         
         for i in range(0, len(points), batch_size):
             batch = points[i:i + batch_size]
             batch_num = (i // batch_size) + 1
             
             self.qdrant_client.upsert(
-                collection_name=self.config_manager.get('COLLECTION_NAME'),
+                collection_name=collection_name,
                 points=batch,
-                wait=False
+                wait=True  # Wait for indexing to complete
             )
             
             if batch_num % 5 == 0 or batch_num == total_batches:
@@ -435,13 +571,13 @@ class EnhancedRAGService:
         
         return {'processing_time': processing_time}
     
-    def _store_document_metadata(self, file_id: str, metadata: Dict[str, Any]):
-        """Store document metadata in Qdrant"""
-        import uuid
+    def _store_document_metadata(self, file_id: str, metadata: Dict[str, Any], session_id: str = None):
+        """Store document metadata in Qdrant with proper session isolation"""
         from qdrant_client.http import models
         
         try:
             dummy_embedding = [0.0] * self.embedding_dim
+            collection_name = self._get_collection_name(session_id)
             
             payload = {
                 'content': f"METADATA:{metadata.get('filename', file_id)}",
@@ -450,11 +586,12 @@ class EnhancedRAGService:
                 'doc_pages': metadata.get('total_pages', 0),
                 'doc_words': metadata.get('total_words', 0),
                 'filename': metadata.get('filename', ''),
-                'created_at': datetime.now().isoformat()
+                'created_at': datetime.now().isoformat(),
+                'session_id': session_id
             }
             
             self.qdrant_client.upsert(
-                collection_name=self.config_manager.get('COLLECTION_NAME'),
+                collection_name=collection_name,
                 points=[models.PointStruct(
                     id=str(uuid.uuid4()),
                     vector=dummy_embedding,
@@ -463,56 +600,83 @@ class EnhancedRAGService:
                 wait=False
             )
             
+            logger.info(f"Metadata stored in collection: {collection_name}")
+            
         except Exception as e:
-            logger.warning(f"Metadata storage failed: {str(e)}")
+            logger.error(f"Metadata storage failed for session {session_id}: {str(e)}")
+            raise
+    
+    def _cache_key(self, file_id: str, question: str) -> str:
+        """Generate cache key for question"""
+        return hashlib.md5(f"{file_id}:{question}".encode()).hexdigest()
     
     def answer_question(self, file_id: str, question: str, 
                        conversation_history: List[Dict] = None,
                        session_id: str = None) -> Dict[str, Any]:
-        """Answer a question using the RAG system"""
+        """Answer a question using the RAG system with caching"""
         if not self.qdrant_client:
-            return self._create_answer_error_response('Vector database not available')
+            return self._create_answer_error_response(
+                'Vector database not available',
+                context={'file_id': file_id, 'session_id': session_id}
+            )
+        
+        # Check cache first
+        cache_key = self._cache_key(file_id, question)
+        if cache_key in self._answer_cache:
+            cached = self._answer_cache[cache_key]
+            if time.time() - cached['timestamp'] < self.ANSWER_CACHE_TTL:
+                logger.info(f"Returning cached answer for: {question[:50]}...")
+                cached_result = cached['result'].copy()
+                cached_result['cached'] = True
+                return cached_result
         
         try:
             start_time = time.time()
             self.stats['questions_processed'] += 1
             
-            # Perform search
-            search_results = self._search_with_file_filter(question, file_id)
+            # Ensure session collection exists
+            self._ensure_collection(session_id)
             
-            if not search_results:
-                return self._create_answer_error_response('No relevant information found')
+            # Generate answer using session-specific search results
+            search_results = self._search_in_session(question, session_id, file_id)
             
-            # Generate answer using the anti-hallucination prompts
-            context_chunks = []
-            for result in search_results[:5]:
-                if hasattr(result, 'chunk') and hasattr(result.chunk, 'content'):
-                    content = result.chunk.content.strip()
-                    if content and len(content) > 20:
-                        context_chunks.append(content)
+            if not search_results or len(search_results) == 0:
+                return self._create_answer_error_response(
+                    'No relevant information found in your documents. The document may not contain information about this topic.',
+                    context={
+                        'file_id': file_id,
+                        'session_id': session_id,
+                        'question': question,
+                        'suggestion': 'Try rephrasing your question or asking about a different topic from the document.'
+                    }
+                )
             
-            if not context_chunks:
-                return self._create_answer_error_response('No suitable content found')
+            # Select best chunks using simplified scoring
+            final_chunks = self._select_best_chunks(search_results, self.MAX_CONTEXT_CHUNKS)
             
-            # Use anti-hallucination prompt
-            content_type = self._detect_content_type(question, context_chunks[0] if context_chunks else "")
+            if not final_chunks:
+                return self._create_answer_error_response('No suitable content found to answer your question')
+            
+            # Store question context for intelligent post-processing
+            self._current_question_context = question
+            
+            # Create enhanced prompt for accurate, document-specific answers
             enhanced_prompt = self._create_enhanced_anti_hallucination_prompt(
-                question, context_chunks, content_type
+                question, final_chunks, "general"
             )
             
-            # Generate answer using LLM (restore original functionality)
+            # Generate answer with improved processing
             generation_result = self._generate_enhanced_answer_with_prompt(
-                enhanced_prompt, search_results, conversation_history, ""
+                enhanced_prompt, search_results[:3], conversation_history, ""
             )
             
             if not generation_result['success']:
                 return generation_result
             
-            # Validate answer quality (like original)
+            # Validate answer quality
             if 'answer' in generation_result:
-                chunk_strings = [chunk for chunk in context_chunks if isinstance(chunk, str)]
                 quality_check = self.validate_answer_quality(
-                    generation_result['answer'], chunk_strings
+                    generation_result['answer'], final_chunks
                 )
                 generation_result['quality_metrics'] = quality_check
             
@@ -521,11 +685,11 @@ class EnhancedRAGService:
                 question, search_results, generation_result
             )
             
-            # Adjust confidence based on quality validation (like original)
+            # Adjust confidence based on quality validation
             quality_score = generation_result.get('quality_metrics', {}).get('score', 0.5)
             confidence = (base_confidence + quality_score) / 2.0
             
-            # Prepare response using original format
+            # Prepare response
             result = self._prepare_final_response(
                 generation_result, search_results, confidence, start_time
             )
@@ -533,6 +697,18 @@ class EnhancedRAGService:
             # Add session information
             result['file_id'] = file_id
             result['session_id'] = session_id
+            result['cached'] = False
+            
+            # Cache the result
+            self._answer_cache[cache_key] = {
+                'result': result.copy(),
+                'timestamp': time.time()
+            }
+            
+            # Limit cache size
+            if len(self._answer_cache) > self.ANSWER_CACHE_SIZE:
+                oldest = min(self._answer_cache.items(), key=lambda x: x[1]['timestamp'])
+                del self._answer_cache[oldest[0]]
             
             return result
             
@@ -540,58 +716,295 @@ class EnhancedRAGService:
             logger.error(f"Question answering failed: {str(e)}")
             return self._create_answer_error_response(f'Processing error: {str(e)}')
     
-    def _create_answer_error_response(self, message: str) -> Dict[str, Any]:
-        """Create standardized error response for answer questions"""
-        return {
-            'success': False,
-            'error': message,
+    def _select_best_chunks(self, search_results: List, max_chunks: int = 4) -> List[str]:
+        """Select best chunks based on combined scoring"""
+        scored_chunks = []
+        
+        for result in search_results[:self.MAX_SEARCH_RESULTS * 2]:
+            if hasattr(result, 'chunk') and hasattr(result.chunk, 'content'):
+                content = result.chunk.content.strip()
+                
+                # Skip low-quality chunks
+                if len(content) < self.MIN_CHUNK_LENGTH or self._is_low_quality_chunk(content):
+                    continue
+                
+                # Simple quality scoring
+                quality_score = (
+                    result.combined_score * 0.6 +
+                    (min(len(content), 500) / 500) * 0.2 +  # Length normalization
+                    0.2  # Base quality
+                )
+                
+                scored_chunks.append((content, quality_score))
+        
+        # Sort and return top chunks
+        scored_chunks.sort(key=lambda x: x[1], reverse=True)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_chunks = []
+        for chunk, _ in scored_chunks[:max_chunks * 2]:
+            chunk_preview = chunk[:100]
+            if chunk_preview not in seen:
+                seen.add(chunk_preview)
+                unique_chunks.append(chunk)
+                if len(unique_chunks) >= max_chunks:
+                    break
+        
+        return unique_chunks
+    
+    def _create_answer_error_response(self, message: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Create standardized error response for answer generation"""
+        error_response = ErrorResponse.create(
+            error_message=message,
+            error_type='answer_generation_error',
+            retry_recommended=True,
+            context=context or {}
+        )
+        # Add answer-specific fields
+        error_response.update({
             'answer': '',
             'confidence': 0.0,
-            'processing_time': 0.0,
-            'retry_recommended': True
-        }
+            'processing_time': 0.0
+        })
+        return error_response
     
-    def _search_with_file_filter(self, question: str, file_id: str):
-        """Perform search with file filtering"""
+    def _search_in_session(self, question: str, session_id: str, file_id: str = None):
+        """Perform enhanced search within session-specific collection for accurate answers"""
         try:
-            # Use the search engine to find relevant chunks
-            logger.info(f"Performing hybrid search for: '{question}' in file: {file_id}")
-            all_results = self.search_engine.search(question, top_k=20)
-            logger.info(f"Hybrid search returned {len(all_results)} total results")
+            collection_name = self._get_collection_name(session_id)
+            logger.info(f"Performing enhanced search in session collection: {collection_name}")
             
-            # Filter results by file_id
-            filtered_results = []
-            for result in all_results:
-                if hasattr(result, 'chunk') and hasattr(result.chunk, 'metadata'):
+            # Enhanced query processing for better relevance
+            processed_question = self._preprocess_question_for_search(question)
+            
+            # Direct Qdrant search for session-specific collection with adaptive threshold
+            query_embedding = self.embedding_model.encode(processed_question).tolist()
+            
+            # Use adaptive threshold based on collection content
+            adaptive_threshold = self._calculate_adaptive_threshold(collection_name, query_embedding)
+            
+            # Use the new query_points API instead of deprecated search
+            from qdrant_client.http import models
+            search_results = self.qdrant_client.query_points(
+                collection_name=collection_name,
+                query=query_embedding,
+                limit=15,  # Get more results for better filtering
+                with_payload=True,
+                with_vectors=False,
+                score_threshold=adaptive_threshold
+            ).points
+            
+            logger.info(f"Session search returned {len(search_results)} results")
+            
+            # Convert and rank results by relevance
+            converted_results = []
+            for i, result in enumerate(search_results):
+                # Enhanced result filtering for quality
+                content = result.payload.get('content', '').strip()
+                if len(content) < 20:  # Skip very short chunks
+                    continue
+                
+                # Create SessionSearchResult object
+                session_result = SessionSearchResult(
+                    chunk=SimpleNamespace(
+                        content=content,
+                        metadata=result.payload,
+                        file_id=result.payload.get('file_id', ''),
+                        chunk_type=result.payload.get('chunk_type', 'text'),
+                        chunk_id=result.payload.get('chunk_id', ''),
+                        page=result.payload.get('page', 0),
+                        token_count=result.payload.get('token_count', len(content.split())),
+                        semantic_density=result.payload.get('semantic_density', 0.0),
+                        section_hierarchy=result.payload.get('section_hierarchy', []),
+                        key_terms=result.payload.get('key_terms', []),
+                        entities=result.payload.get('entities', [])
+                    ),
+                    dense_score=result.score,
+                    combined_score=result.score,
+                    relevance_rank=i
+                )
+                converted_results.append(session_result)
+            
+            # Optional file filtering within session (if file_id provided)
+            if file_id:
+                filtered_results = []
+                for result in converted_results:
                     chunk_file_id = result.chunk.metadata.get('file_id')
                     if chunk_file_id == file_id:
                         filtered_results.append(result)
-                        logger.debug(f"Result included: dense={result.dense_score:.3f}, sparse={result.sparse_score:.3f}, rerank={result.rerank_score:.3f}")
-                elif hasattr(result, 'chunk') and hasattr(result.chunk, 'file_id'):
-                    if result.chunk.file_id == file_id:
-                        filtered_results.append(result)
-                        logger.debug(f"Result included: dense={result.dense_score:.3f}, sparse={result.sparse_score:.3f}, rerank={result.rerank_score:.3f}")
+                
+                logger.info(f"After file filtering within session: {len(filtered_results)} results")
+                final_results = filtered_results[:self.MAX_SEARCH_RESULTS] if filtered_results else converted_results[:self.MAX_SEARCH_RESULTS]
+            else:
+                final_results = converted_results[:self.MAX_SEARCH_RESULTS]
             
-            logger.info(f"After file filtering: {len(filtered_results)} results for file {file_id}")
-            return filtered_results[:10]  # Return top 10 filtered results
+            # Sort by relevance score to ensure best results first
+            final_results.sort(key=lambda x: x.combined_score, reverse=True)
+            
+            logger.info(f"Returning {len(final_results)} high-quality results for answer generation")
+            return final_results
+            
         except Exception as e:
-            logger.error(f"Search failed: {str(e)}")
+            logger.error(f"Enhanced session search failed: {str(e)}")
+            logger.warning(f"Session search failed for session {session_id}, returning empty results")
             return []
     
-    def _detect_content_type(self, question: str, context: str) -> str:
-        """Detect the content type based on context and question"""
-        return self.anti_hallucination.detect_content_type(context, question)
+    def _preprocess_question_for_search(self, question: str) -> str:
+        """Preprocess question to improve search relevance"""
+        import re
+        
+        # Remove question words that don't help with semantic search
+        processed = re.sub(r'^(what|how|when|where|why|who|which|can|could|would|should|do|does|did|is|are|was|were)\s+', '', question.lower())
+        
+        # Remove common filler words but preserve important context
+        processed = re.sub(r'\b(please|could you|can you|tell me|explain|describe)\b', '', processed)
+        
+        # Preserve important interrogative context
+        if any(word in question.lower() for word in ['how many', 'how much', 'what type', 'what kind']):
+            return question  # Keep original for these specific patterns
+        
+        return processed.strip() if processed.strip() else question
+    
+    def _is_low_quality_chunk(self, content: str) -> bool:
+        """Filter out low-quality chunks that don't contribute to good answers"""
+        content_lower = content.lower().strip()
+        
+        # Check for common low-quality patterns
+        low_quality_patterns = [
+            'click here', 'see also', 'table of contents', 'page number',
+            'copyright', '©', 'all rights reserved', 'terms of service',
+            'file size', 'last modified', 'created by', 'document title',
+            'n/a', 'tbd', 'todo', 'placeholder', 'lorem ipsum',
+        ]
+        
+        # Check length and content quality
+        if len(content_lower) < self.MIN_CHUNK_LENGTH:
+            return True
+            
+        # Check for repetitive content
+        words = content_lower.split()
+        if len(set(words)) < len(words) * 0.5:  # More than 50% repeated words
+            return True
+            
+        # Check for low-quality patterns
+        for pattern in low_quality_patterns:
+            if pattern in content_lower:
+                return True
+                
+        # Check if content is mostly punctuation or numbers
+        import re
+        if re.match(r'^[\d\s\.\,\-\(\)\[\]]+$', content):
+            return True
+                
+        return False
+    
+    def _calculate_adaptive_threshold(self, collection_name: str, query_embedding: list) -> float:
+        """Calculate adaptive threshold based on actual score distribution with caching"""
+        try:
+            query_hash = hashlib.md5(str(query_embedding[:10]).encode()).hexdigest()[:8]
+            cache_key = f"{collection_name}_{query_hash}"
+            
+            # Thread-safe cache check
+            with self.cache_lock:
+                if cache_key in self.threshold_cache:
+                    cached_threshold = self.threshold_cache[cache_key]
+                    logger.debug(f"Using cached threshold: {cached_threshold:.3f}")
+                    return cached_threshold
+            
+            # Calculate threshold (outside lock for better performance)
+            from qdrant_client.http import models
+            sample_results = self.qdrant_client.query_points(
+                collection_name=collection_name,
+                query=query_embedding,
+                limit=10,
+                with_payload=False,
+                with_vectors=False
+            ).points
+            
+            if not sample_results:
+                return 0.01
+            
+            scores = [result.score for result in sample_results]
+            scores.sort(reverse=True)
+            
+            max_score = scores[0]
+            
+            # Adaptive threshold calculation
+            if max_score > 0.5:
+                threshold = max(0.1, max_score * 0.3)
+            elif max_score > 0.1:
+                median_score = scores[len(scores)//2] if len(scores) > 1 else scores[0]
+                threshold = min(max_score * 0.2, median_score)
+            else:
+                threshold = max(0.01, max_score * 0.1)
+            
+            if len(scores) >= 3:
+                top_30_percent_score = scores[min(2, len(scores)-1)]
+                threshold = min(threshold, top_30_percent_score)
+            
+            threshold = max(0.01, min(threshold, 0.8))
+            
+            # Thread-safe cache update
+            with self.cache_lock:
+                if len(self.threshold_cache) >= self.cache_max_size:
+                    oldest_key = next(iter(self.threshold_cache))
+                    del self.threshold_cache[oldest_key]
+                
+                self.threshold_cache[cache_key] = threshold
+            
+            logger.info(f"Adaptive threshold: {threshold:.3f} (max_score: {max_score:.3f})")
+            return threshold
+            
+        except Exception as e:
+            logger.warning(f"Adaptive threshold calculation failed: {e}, using fallback")
+            return 0.05
     
     def _create_enhanced_anti_hallucination_prompt(self, question: str, context_chunks: List[str], content_type: str = "general") -> str:
-        """Create enhanced prompts that minimize hallucinations based on content type"""
+        """Create enhanced prompts that minimize hallucinations and ensure accurate, concise answers"""
         
-        # Combine context with source numbering
+        # Combine context with source numbering and quality filtering
         numbered_context = ""
-        for i, chunk in enumerate(context_chunks[:5], 1):  # Limit to 5 chunks for focus
-            numbered_context += f"\n[Source {i}]: {chunk}\n"
+        relevant_chunks = []
         
-        # Use the anti-hallucination prompts class
-        return self.anti_hallucination.get_prompt_for_content_type(content_type, numbered_context, question)
+        # Filter and prioritize most relevant chunks
+        for i, chunk in enumerate(context_chunks[:3], 1):  # Limit to 3 most relevant chunks
+            if len(chunk.strip()) > self.MIN_CHUNK_LENGTH:  # Only use substantial chunks
+                numbered_context += f"\n[Source {i}]: {chunk.strip()}\n"
+                relevant_chunks.append(chunk)
+        
+        if not relevant_chunks:
+            numbered_context = f"\n[Source 1]: {context_chunks[0] if context_chunks else 'No relevant content found'}\n"
+        
+        # Create enhanced prompt for accurate and concise answers
+        enhanced_prompt = f"""You are an expert document analyst. Answer the user's question using ONLY the provided source material. Be accurate, document-relevant, and concise while preserving all key information.
+
+STRICT GUIDELINES:
+1. Base your answer EXCLUSIVELY on the provided sources
+2. If the sources don't contain the answer, clearly state this
+3. Be specific and factual - avoid generalizations
+4. Include ALL essential information, definitions, and key details
+5. Preserve important context, methods, findings, and implications
+6. Do not add external knowledge or assumptions
+7. Prioritize completeness of key information over brevity
+
+CONTEXT FROM DOCUMENTS:
+{numbered_context}
+
+USER QUESTION: {question}
+
+RESPONSE REQUIREMENTS:
+- Start directly with the answer (no preamble like "Based on the document...")
+- Use specific facts and details from the sources
+- Include key definitions, methods, findings, or implications
+- If uncertain or information is incomplete, acknowledge this
+- Aim for 3-5 sentences but include all essential information
+- Include source numbers in brackets [1], [2] when referencing specific information
+- Do not sacrifice important details for brevity
+
+Answer:"""
+
+        return enhanced_prompt
     
     def _generate_enhanced_answer_with_prompt(self, enhanced_prompt: str, search_results: List,
                                            conversation_history: List[Dict] = None, 
@@ -600,22 +1013,25 @@ class EnhancedRAGService:
         try:
             # Use the enhanced prompt directly with LLM
             if not hasattr(self, 'llm') or not self.llm:
-                # If LLM is not available, use the contextual answer as fallback
-                logger.warning("LLM not available, using contextual answer generation")
+                logger.warning("LLM not available, using fallback answer generation")
                 context_chunks = []
-                for result in search_results[:5]:
+                for result in search_results[:3]:
                     if hasattr(result, 'chunk') and hasattr(result.chunk, 'content'):
                         context_chunks.append(result.chunk.content)
                 
-                answer = self._generate_contextual_answer("", context_chunks, "general")
+                # Simple fallback answer
+                answer = "Based on the available content: " + " ".join(context_chunks[:2])[:400]
+                if len(answer) > 400:
+                    answer = answer[:400] + "..."
+                
                 return {
                     'success': True,
                     'answer': answer,
                     'context_used': len(search_results),
-                    'processing_method': 'contextual_fallback'
+                    'processing_method': 'fallback'
                 }
             
-            response = self.llm.invoke(enhanced_prompt)
+            response = self._rate_limited_llm_call(enhanced_prompt)
             answer_content = response.content.strip()
             
             # Check for API capacity issues
@@ -623,7 +1039,7 @@ class EnhancedRAGService:
                 logger.warning("LLM returned minimal response")
                 raise Exception("LLM returned minimal response - possible API capacity issue")
             
-            # Post-process answer to preserve anti-hallucination structure
+            # Post-process answer
             answer = self._post_process_answer(answer_content, search_results, False)
             
             return {
@@ -642,64 +1058,17 @@ class EnhancedRAGService:
             }
     
     def _post_process_answer(self, answer_content: str, search_results: List, add_sources: bool = True) -> str:
-        """Post-process the generated answer to make it clean and readable"""
-        try:
-            # Basic cleanup
-            answer = answer_content.strip()
-            
-            # Remove HTML formatting that makes answers messy
-            answer = answer.replace('<br />', ' ')
-            answer = answer.replace('<br/>', ' ')
-            answer = answer.replace('<br>', ' ')
-            
-            # Remove excessive markdown formatting
-            answer = answer.replace('**', '')
-            answer = answer.replace('*', '')
-            answer = answer.replace('###', '')
-            answer = answer.replace('##', '')
-            answer = answer.replace('#', '')
-            
-            # Remove verbose source citations that clutter the answer
-            import re
-            answer = re.sub(r'\[Source \d+\]', '', answer)
-            answer = re.sub(r'\[Source \d+, Source \d+\]', '', answer)
-            answer = re.sub(r'\[Source \d+(, Source \d+)*\]', '', answer)
-            
-            # Remove excessive section headers and formatting
-            answer = re.sub(r'### [^:]+:', '', answer)
-            answer = re.sub(r'## [^:]+:', '', answer)
-            answer = re.sub(r'# [^:]+:', '', answer)
-            
-            # Remove repetitive phrases
-            answer = re.sub(r'Sources Cited:.*$', '', answer, flags=re.MULTILINE)
-            answer = re.sub(r'Missing Data:.*$', '', answer, flags=re.MULTILINE | re.DOTALL)
-            answer = re.sub(r'---\s*Sources.*$', '', answer, flags=re.DOTALL)
-            
-            # Clean up multiple spaces and line breaks
-            answer = re.sub(r'\n\s*\n\s*\n', '\n\n', answer)  # Max 2 line breaks
-            answer = re.sub(r' +', ' ', answer)  # Multiple spaces to single
-            answer = answer.strip()
-            
-            # Ensure proper sentence structure
-            if answer and not answer.endswith(('.', '!', '?')):
-                answer += '.'
-            
-            return answer
-            
-        except Exception as e:
-            logger.warning(f"Answer post-processing failed: {str(e)}")
-            return answer_content
-    
-    def _build_context_string(self, search_results: List) -> str:
-        """Build context string from search results"""
-        context_parts = []
-        for i, result in enumerate(search_results[:5], 1):
-            if hasattr(result, 'chunk') and hasattr(result.chunk, 'content'):
-                content = result.chunk.content.strip()
-                if content:
-                    context_parts.append(f"[{i}] {content}")
+        """Post-process the generated answer - simplified"""
+        answer = answer_content.strip()
         
-        return "\n\n".join(context_parts)
+        # Basic cleanup only
+        answer = self.text_processor.clean_llm_output(answer)
+        
+        # Ensure proper ending
+        if answer and not answer.endswith(('.', '!', '?')):
+            answer += '.'
+        
+        return answer
     
     def validate_answer_quality(self, answer: str, context_chunks: List[str]) -> Dict[str, Any]:
         """Validate answer quality against source content"""
@@ -759,7 +1128,7 @@ class EnhancedRAGService:
         """Prepare the final response with all necessary fields"""
         processing_time = time.time() - start_time
         
-        # Post-process the answer to make it clean
+        # Get the answer
         raw_answer = generation_result.get('answer', '')
         clean_answer = self._post_process_answer(raw_answer, search_results, False)
         
@@ -769,14 +1138,14 @@ class EnhancedRAGService:
             if hasattr(result, 'chunk'):
                 source_info = {
                     'content_preview': result.chunk.content[:150] + "..." if len(result.chunk.content) > 150 else result.chunk.content,
-                    'relevance_score': getattr(result, 'hybrid_score', 0.0),
-                    'chunk_type': getattr(result.chunk, 'chunk_type', 'text')
+                    'relevance_score': getattr(result, 'combined_score', getattr(result, 'hybrid_score', 0.0)),
+                    'chunk_type': getattr(result.chunk, 'chunk_type', 'text') if hasattr(result.chunk, 'chunk_type') else 'text'
                 }
                 sources.append(source_info)
         
         return {
             'success': True,
-            'answer': clean_answer,  # Use the cleaned answer
+            'answer': clean_answer,
             'sources': sources,
             'confidence_score': confidence,
             'processing_time': processing_time,
@@ -785,278 +1154,159 @@ class EnhancedRAGService:
             'quality_metrics': generation_result.get('quality_metrics', {})
         }
     
-    def _generate_contextual_answer(self, question: str, context_chunks: List[str], content_type: str) -> str:
-        """Generate a contextual answer that directly addresses the question"""
-        
-        # Keywords to look for based on common question types
-        question_lower = question.lower()
-        
-        # Handle specific question types
-        if "series" in question_lower or "model" in question_lower:
-            return self._extract_series_models(context_chunks, question)
-        elif "feature" in question_lower or "specification" in question_lower:
-            return self._extract_features(context_chunks, question)
-        elif "price" in question_lower or "cost" in question_lower:
-            return self._extract_pricing(context_chunks, question)
-        elif "size" in question_lower or "dimension" in question_lower:
-            return self._extract_dimensions(context_chunks, question)
-        else:
-            # General answer - find most relevant content
-            return self._extract_general_answer(context_chunks, question)
-    
-    def _extract_series_models(self, context_chunks: List[str], question: str) -> str:
-        """Extract series and model information"""
-        series_info = []
-        models = []
-        
-        for chunk in context_chunks:
-            chunk_lower = chunk.lower()
-            
-            # Look for series mentions (E-Series, G-Series, etc.)
-            import re
-            series_pattern = r'([A-Z]-Series)'
-            series_matches = re.findall(series_pattern, chunk)
-            series_info.extend(series_matches)
-            
-            # Also look for "Range of" descriptions
-            if "range of" in chunk_lower and "series" in chunk_lower:
-                # Extract the specific range description
-                parts = chunk.split("Range of")
-                if len(parts) > 1:
-                    range_desc = parts[1].split("(")[0].strip()
-                    if range_desc:
-                        series_info.append(f"Range of {range_desc}")
-            
-            # Look for model numbers (GL-B257EES3, etc.)
-            model_pattern = r'GL-[A-Z0-9]+|[A-Z]{2,}-[A-Z0-9]+'
-            found_models = re.findall(model_pattern, chunk)
-            models.extend(found_models)
-        
-        # Build answer
-        answer_parts = []
-        
-        if series_info:
-            unique_series = list(set(series_info))
-            answer_parts.append("Series mentioned in the document:")
-            for info in unique_series[:3]:  # Limit to 3 most relevant
-                answer_parts.append(f"• {info}")
-        
-        if models:
-            unique_models = list(set(models))
-            if len(unique_models) <= 5:
-                answer_parts.append(f"\nModel numbers: {', '.join(unique_models)}")
-            else:
-                answer_parts.append(f"\nModel numbers: {', '.join(unique_models[:5])} (and {len(unique_models)-5} more)")
-        
-        if answer_parts:
-            return "\n".join(answer_parts)
-        else:
-            return "No specific series or model information found in the retrieved content."
-    
-    def _extract_features(self, context_chunks: List[str], question: str) -> str:
-        """Extract feature information"""
-        features = []
-        
-        for chunk in context_chunks:
-            # Look for bullet points and feature lists
-            lines = chunk.split('\n')
-            for line in lines:
-                line = line.strip()
-                if line.startswith('•') or line.startswith('-') or line.startswith('*'):
-                    features.append(line)
-        
-        if features:
-            return "Key features mentioned:\n" + "\n".join(features[:8])
-        else:
-            # Fallback to general content
-            return f"Features information: {context_chunks[0][:300]}..." if context_chunks else "No feature information found."
-    
-    def _extract_pricing(self, context_chunks: List[str], question: str) -> str:
-        """Extract pricing information"""
-        import re
-        pricing_info = []
-        
-        for chunk in context_chunks:
-            # Look for currency symbols and numbers
-            price_patterns = [r'\$[\d,]+', r'₹[\d,]+', r'€[\d,]+', r'£[\d,]+']
-            for pattern in price_patterns:
-                matches = re.findall(pattern, chunk)
-                pricing_info.extend(matches)
-        
-        if pricing_info:
-            return f"Pricing information found: {', '.join(set(pricing_info))}"
-        else:
-            return "No specific pricing information found in the retrieved content."
-    
-    def _extract_dimensions(self, context_chunks: List[str], question: str) -> str:
-        """Extract size and dimension information"""
-        import re
-        dimension_info = []
-        
-        for chunk in context_chunks:
-            # Look for dimension patterns (e.g., "24 x 30 x 40", "Width: 60cm")
-            patterns = [
-                r'\d+\s*[x×]\s*\d+\s*[x×]\s*\d+',  # 24 x 30 x 40
-                r'\d+\s*(cm|mm|inch|ft)',           # 60cm, 24inch
-                r'(width|height|depth|length):\s*\d+',  # Width: 60
-            ]
-            
-            for pattern in patterns:
-                matches = re.findall(pattern, chunk, re.IGNORECASE)
-                dimension_info.extend(matches)
-        
-        if dimension_info:
-            return f"Dimensions found: {', '.join(set(str(d) for d in dimension_info))}"
-        else:
-            return "No specific dimension information found in the retrieved content."
-    
-    def _extract_general_answer(self, context_chunks: List[str], question: str) -> str:
-        """Generate a general answer from the most relevant content"""
-        if not context_chunks:
-            return "No relevant information found in the document."
-        
-        # Use the first chunk as primary content
-        main_content = context_chunks[0]
-        
-        # Clean up the content
-        cleaned_content = main_content.replace('<br />', ' ').replace('<br/>', ' ')
-        cleaned_content = ' '.join(cleaned_content.split())  # Remove extra whitespace
-        
-        # Limit length for readability
-        if len(cleaned_content) > 400:
-            cleaned_content = cleaned_content[:400] + "..."
-        
-        return f"Based on the document: {cleaned_content}"
-    
-    def generate_sample_questions(self, chunks, document_metadata: Dict[str, Any] = None) -> List[str]:
-        """Generate sample questions for document exploration"""
+    def generate_sample_questions(self, chunks=None, document_metadata: Dict[str, Any] = None, 
+                             session_id: str = None) -> List[str]:
+        """Generate sample questions using RAG pipeline from session documents"""
         try:
-            # Use subset for efficiency
-            sample_chunks = chunks[:5] if len(chunks) > 5 else chunks
-            
-            # Debug logging
-            logger.info(f"Generating questions from {len(sample_chunks)} chunks")
-            
-            # Combine all content for analysis
-            all_content = ""
-            for chunk in sample_chunks:
-                content = getattr(chunk, 'page_content', str(chunk))
-                all_content += " " + content
-                logger.debug(f"Chunk content preview: {content[:100]}...")
-            
-            # Convert to lowercase for analysis
-            content_lower = all_content.lower()
-            logger.info(f"Analyzing {len(all_content)} characters of content")
-            
-            # Extract meaningful terms and concepts
-            import re
-            
-            # Find proper nouns and technical terms (more sophisticated than just capitalized words)
-            proper_nouns = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', all_content)
-            # Filter out common words that aren't meaningful
-            meaningful_terms = [term for term in proper_nouns if term.lower() not in {
-                'the', 'this', 'that', 'with', 'from', 'they', 'have', 'been', 'were', 'will', 'would',
-                'can', 'could', 'should', 'may', 'might', 'must', 'shall', 'dear', 'editors', 'figure',
-                'table', 'section', 'page', 'chapter', 'document', 'paper', 'article', 'study', 'research'
-            }]
-            
-            # Find specific domain concepts
-            domain_concepts = []
-            domain_patterns = {
-                'framework': r'\b(\w+)\s+framework\b',
-                'model': r'\b(\w+)\s+model\b',
-                'system': r'\b(\w+)\s+system\b',
-                'algorithm': r'\b(\w+)\s+algorithm\b',
-                'method': r'\b(\w+)\s+method\b',
-                'approach': r'\b(\w+)\s+approach\b'
-            }
-            
-            for concept_type, pattern in domain_patterns.items():
-                matches = re.findall(pattern, content_lower)
-                for match in matches[:2]:  # Take first 2 matches
-                    if len(match) > 3 and match not in {'this', 'that', 'such', 'new', 'old'}:
-                        domain_concepts.append(f"{match} {concept_type}")
-            
-            logger.info(f"Found {len(meaningful_terms)} meaningful terms and {len(domain_concepts)} domain concepts")
-            
-            # Generate context-aware questions based on content patterns
-            questions = []
-            
-            # Question 1: Main topic/subject with specific terms
-            if meaningful_terms:
-                # Use the most frequent meaningful term
-                term_counts = {}
-                for term in meaningful_terms:
-                    term_counts[term] = term_counts.get(term, 0) + 1
-                most_common_term = max(term_counts, key=term_counts.get) if term_counts else meaningful_terms[0]
-                questions.append(f"What is {most_common_term} and how is it explained in this document?")
-            elif domain_concepts:
-                questions.append(f"What is the {domain_concepts[0]} described in this document?")
-            elif any(keyword in content_lower for keyword in ['research', 'study', 'analysis', 'investigation']):
-                questions.append("What research or study is being discussed in this document?")
-            else:
-                questions.append("What is the main topic or subject of this document?")
-            
-            # Question 2: Purpose/objective with context
-            if any(keyword in content_lower for keyword in ['objective', 'goal', 'aim', 'purpose']):
-                questions.append("What are the main objectives or goals discussed?")
-            elif any(keyword in content_lower for keyword in ['problem', 'challenge', 'issue', 'gap']):
-                questions.append("What problems or challenges are being addressed?")
-            elif domain_concepts:
-                questions.append(f"What is the purpose of the {domain_concepts[0] if domain_concepts else 'approach'}?")
-            else:
-                questions.append("What is the purpose or focus of this document?")
-            
-            # Question 3: Methodology/approach with specifics
-            if domain_concepts:
-                questions.append(f"How does the {domain_concepts[0]} work or function?")
-            elif any(keyword in content_lower for keyword in ['methodology', 'method', 'approach', 'technique']):
-                questions.append("What methodology or approach is being used?")
-            elif any(keyword in content_lower for keyword in ['data', 'dataset', 'sample', 'participants']):
-                questions.append("What data or samples are being analyzed?")
-            else:
-                questions.append("What specific methods are described in this document?")
-            
-            # Question 4: Results/findings with context
-            if any(keyword in content_lower for keyword in ['result', 'finding', 'outcome', 'conclusion']):
-                questions.append("What are the main results or findings presented?")
-            elif any(keyword in content_lower for keyword in ['performance', 'accuracy', 'effectiveness', 'efficiency']):
-                questions.append("How well does the described approach perform?")
-            elif meaningful_terms:
-                questions.append(f"What are the key characteristics or properties of {meaningful_terms[0]}?")
-            else:
-                questions.append("What key information or insights are provided?")
-            
-            # Question 5: Applications/implications with specifics
-            if any(keyword in content_lower for keyword in ['application', 'implementation', 'practical', 'real-world']):
-                questions.append("What are the practical applications of this work?")
-            elif any(keyword in content_lower for keyword in ['future', 'recommendation', 'suggestion', 'next']):
-                questions.append("What future directions or recommendations are suggested?")
-            elif meaningful_terms and len(meaningful_terms) > 1:
-                questions.append(f"How do {meaningful_terms[0]} and {meaningful_terms[1]} relate to each other?")
-            else:
-                questions.append("What are the implications or significance of this work?")
-            
-            # Clean and format questions
-            cleaned_questions = []
-            for i, q in enumerate(questions[:5], 1):
-                cleaned_q = q.strip()
-                if not cleaned_q.endswith('?'):
-                    cleaned_q += '?'
-                final_q = f"{i}. {cleaned_q}"
-                cleaned_questions.append(final_q)
-            
-            logger.info(f"Successfully generated {len(cleaned_questions)} context-specific questions")
-            return cleaned_questions
-            
+            if session_id:
+                return self._generate_questions_from_session(session_id)
+            return self._get_fallback_questions()
         except Exception as e:
             logger.warning(f"Sample question generation failed: {str(e)}")
-            return [
-                "1. What is this document about?",
-                "2. What are the main points discussed?",
-                "3. What methods or approaches are described?",
-                "4. What are the key findings or results?", 
-                "5. What are the practical applications?"
+            return self._get_fallback_questions()
+    
+    def _generate_questions_from_session(self, session_id: str) -> List[str]:
+        """Generate questions using RAG pipeline from session documents"""
+        try:
+            collection_name = self._get_collection_name(session_id)
+            logger.info(f"Retrieving content from session collection: {collection_name}")
+            
+            # Get sample content from session collection
+            sample_queries = [
+                "main topic content overview",
+                "key concepts and methods", 
+                "important findings results",
+                "practical applications uses",
+                "conclusions recommendations"
             ]
+            
+            all_content = []
+            for query in sample_queries:
+                try:
+                    # Use session search to get relevant content
+                    search_results = self._search_in_session(query, session_id)
+                    for result in search_results[:2]:  # Take top 2 results per query
+                        if hasattr(result, 'chunk') and hasattr(result.chunk, 'content'):
+                            content = result.chunk.content.strip()
+                            if len(content) > 50:  # Only meaningful content
+                                all_content.append(content)
+                except Exception as e:
+                    logger.debug(f"Search failed for query '{query}': {e}")
+                    continue
+            
+            if not all_content:
+                logger.warning("No content found in session collection")
+                return self._get_fallback_questions()
+            
+            # Combine content for analysis
+            combined_content = " ".join(all_content[:10])  # Limit to avoid token limits
+            logger.info(f"Analyzing {len(combined_content)} characters from session documents")
+            
+            # Generate questions using LLM with RAG content
+            if hasattr(self, 'llm') and self.llm:
+                return self._generate_questions_with_llm(combined_content)
+            else:
+                # Fallback to pattern-based generation
+                return self._generate_questions_from_content(combined_content)
+                
+        except Exception as e:
+            logger.error(f"Session-based question generation failed: {e}")
+            return self._get_fallback_questions()
+    
+    def _generate_questions_with_llm(self, content: str) -> List[str]:
+        """Generate questions using LLM based on document content"""
+        try:
+            question_prompt = f"""Based on the following document content, generate 5 specific and meaningful questions that would help someone understand the key aspects of this content. The questions should be:
+1. Specific to the content (not generic)
+2. Focus on main topics, methods, findings, and applications
+3. Be clear and concise
+4. Help explore different aspects of the document
+
+Content:
+{content[:2000]}
+
+Generate exactly 5 questions, one per line, numbered 1-5:"""
+
+            response = self._rate_limited_llm_call(question_prompt)
+            questions_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Parse questions from response
+            questions = []
+            for line in questions_text.split('\n'):
+                line = line.strip()
+                if line and any(line.startswith(f"{i}.") for i in range(1, 6)):
+                    # Clean up the question
+                    question = line.split('.', 1)[1].strip() if '.' in line else line
+                    if question and not question.endswith('?'):
+                        question += '?'
+                    questions.append(f"{len(questions) + 1}. {question}")
+            
+            if len(questions) >= 3:
+                logger.info(f"Generated {len(questions)} LLM-based questions")
+                return questions[:5]
+            else:
+                logger.warning("LLM generated insufficient questions, falling back")
+                return self._generate_questions_from_content(content)
+                
+        except Exception as e:
+            logger.error(f"LLM question generation failed: {e}")
+            return self._generate_questions_from_content(content)
+    
+    def _generate_questions_from_content(self, content: str) -> List[str]:
+        """Generate questions from content using pattern analysis"""
+        import re
+        
+        content_lower = content.lower()
+        questions = []
+        
+        # Extract key terms
+        proper_nouns = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', content)
+        meaningful_terms = [term for term in proper_nouns[:5] if len(term) > 3]
+        
+        # Generate context-aware questions
+        if meaningful_terms:
+            questions.append(f"What is {meaningful_terms[0]} and how is it explained?")
+        else:
+            questions.append("What is the main topic of this document?")
+        
+        if any(kw in content_lower for kw in ['objective', 'goal', 'purpose']):
+            questions.append("What are the main objectives discussed?")
+        else:
+            questions.append("What is the purpose of this document?")
+        
+        if any(kw in content_lower for kw in ['method', 'approach', 'technique']):
+            questions.append("What methodology or approach is used?")
+        else:
+            questions.append("What methods are described?")
+        
+        if any(kw in content_lower for kw in ['result', 'finding', 'outcome']):
+            questions.append("What are the main results or findings?")
+        else:
+            questions.append("What key information is provided?")
+        
+        if any(kw in content_lower for kw in ['application', 'practical']):
+            questions.append("What are the practical applications?")
+        else:
+            questions.append("What are the implications of this work?")
+        
+        # Format questions
+        formatted_questions = []
+        for i, q in enumerate(questions[:5], 1):
+            if not q.startswith(f"{i}."):
+                q = f"{i}. {q}"
+            formatted_questions.append(q)
+        
+        return formatted_questions
+    
+    def _get_fallback_questions(self) -> List[str]:
+        """Return fallback questions when generation fails"""
+        return [
+            "1. What is this document about?",
+            "2. What are the main points discussed?",
+            "3. What methods or approaches are described?",
+            "4. What are the key findings or results?", 
+            "5. What are the practical applications?"
+        ]
+
 
 __all__ = ['EnhancedRAGService']

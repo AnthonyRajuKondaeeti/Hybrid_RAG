@@ -21,6 +21,28 @@ except ImportError:
 class TextProcessor:
     """Centralized text processing utilities"""
     
+    # ADD this method to TextProcessor class:
+    @staticmethod
+    def clean_llm_output(text: str) -> str:
+        """Clean common LLM output artifacts"""
+        import re
+        
+        # Remove common preambles
+        text = re.sub(r'^(Based on|According to|The document states?)[^.]*[.,]\s*', '', text, flags=re.IGNORECASE)
+        
+        # Remove HTML tags
+        text = re.sub(r'<br\s*/?>|<br>', ' ', text)
+        
+        # Remove markdown formatting
+        text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+        text = re.sub(r'\*([^*]+)\*', r'\1', text)
+        
+        # Clean whitespace
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
+        text = re.sub(r' {2,}', ' ', text)
+        
+        return text.strip()
+
     @staticmethod
     def extract_key_terms(content: str, max_terms: int = 10) -> List[str]:
         """Extract key terms using frequency and capitalization heuristics"""

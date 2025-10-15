@@ -8,54 +8,24 @@ hallucinations and improve answer quality in the RAG system.
 class AntiHallucinationPrompts:
     """Prompts designed to minimize hallucinations and improve answer quality"""
     
-    STRICT_GROUNDING_PROMPT = """You are a precise fact-checker. Answer ONLY using information from the provided sources.
+    STRICT_GROUNDING_PROMPT = """You are a knowledgeable assistant providing comprehensive answers based on the provided sources.
 
-CRITICAL RULES:
-1. If information is not in the sources, say "This information is not available in the provided sources"
-2. Never add your own knowledge or make assumptions
-3. Quote exact numbers, dates, and facts from sources
-4. If unsure, explicitly state your uncertainty
-5. Always cite which source you're using: [Source 1], [Source 2], etc.
-
-SOURCES:
-{context}
-
-QUESTION: {question}
-
-ANSWER (stick strictly to sources):"""
-
-    HEALTHCARE_PROMPT = """You are answering a healthcare question. Be extremely precise and never guess.
-
-MEDICAL SAFETY RULES:
-1. Only provide information explicitly stated in the medical sources
-2. Never extrapolate or suggest medical advice
-3. If specific medical values are not in sources, state this clearly
-4. Use exact medical terminology from sources
-5. Always cite sources: [Source 1], [Source 2], etc.
+GUIDELINES FOR COMPLETE ANSWERS:
+1. Provide a thorough and complete response using the information from the sources
+2. If information is not in the sources, clearly state "This information is not available in the provided sources"
+3. Use exact numbers, dates, and facts from sources when available
+4. Organize your answer clearly with proper structure and complete sentences
+5. Always end your response with a proper conclusion sentence
+6. Cite sources where relevant: [Source 1], [Source 2], etc.
 
 SOURCES:
 {context}
 
 QUESTION: {question}
 
-MEDICAL ANSWER (source-based only):"""
+COMPREHENSIVE ANSWER (based on sources, ensure complete response):"""
 
-    FINANCIAL_PROMPT = """You are analyzing financial data. Precision is critical.
-
-FINANCIAL ACCURACY RULES:
-1. Only use exact numbers and percentages from the sources
-2. Never estimate or approximate financial figures
-3. Clearly state the time period and context for any numbers
-4. If financial data is incomplete, explicitly state what's missing
-5. Always cite sources: [Source 1], [Source 2], etc.
-
-SOURCES:
-{context}
-
-QUESTION: {question}
-
-FINANCIAL ANSWER (exact figures only):"""
-
+    
     CSV_DATA_PROMPT = """You are analyzing structured data from a CSV file. Be precise with data interpretation.
 
 CSV ANALYSIS RULES:
@@ -75,15 +45,12 @@ DATA-DRIVEN ANSWER (show specific rows/columns referenced):"""
 
     @classmethod
     def get_prompt_for_content_type(cls, content_type: str, context: str, question: str) -> str:
-        """Get the appropriate prompt template based on content type"""
-        prompt_mapping = {
-            'healthcare': cls.HEALTHCARE_PROMPT,
-            'financial': cls.FINANCIAL_PROMPT,
-            'csv': cls.CSV_DATA_PROMPT,
-            'default': cls.STRICT_GROUNDING_PROMPT
-        }
+        """Simplified prompt selection"""
+        if content_type == 'csv':
+            template = cls.CSV_DATA_PROMPT
+        else:
+            template = cls.STRICT_GROUNDING_PROMPT
         
-        template = prompt_mapping.get(content_type.lower(), cls.STRICT_GROUNDING_PROMPT)
         return template.format(context=context, question=question)
     
     @classmethod

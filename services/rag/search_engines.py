@@ -7,6 +7,7 @@ hybrid search that combines dense and sparse retrieval methods.
 
 import logging
 import numpy as np
+from functools import lru_cache
 from typing import List, Optional
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from .models import SemanticChunk, SearchResult
@@ -25,7 +26,14 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 class HybridSearchEngine:
-    """Optimized hybrid search engine"""
+    """Optimized hybrid search engine with caching"""
+    
+    # Configuration constants
+    DEFAULT_SPARSE_WEIGHT = 0.3
+    DEFAULT_DENSE_WEIGHT = 0.7
+    RERANK_HYBRID_WEIGHT = 0.7
+    RERANK_SCORE_WEIGHT = 0.3
+    QUERY_CACHE_SIZE = 100
     
     def __init__(self, embedding_model: SentenceTransformer, reranker: CrossEncoder = None, 
                  config_manager: ConfigManager = None):
@@ -40,8 +48,11 @@ class HybridSearchEngine:
         self.chunks_metadata = []
         
         # Search parameters
-        self.sparse_weight = 0.3
-        self.dense_weight = 0.7
+        self.sparse_weight = self.DEFAULT_SPARSE_WEIGHT
+        self.dense_weight = self.DEFAULT_DENSE_WEIGHT
+        
+        # Query embedding cache
+        self._query_embedding_cache = {}
 
     @with_retry()
     def index_chunks(self, chunks: List[SemanticChunk]):
@@ -101,12 +112,12 @@ class HybridSearchEngine:
                 # Add section context (limited)
                 if chunk.section_hierarchy and len(chunk.section_hierarchy) <= 3:
                     hierarchy_context = " > ".join(chunk.section_hierarchy[:3])
-                    enhanced_text = f"Section: {hierarchy_context}\\n{enhanced_text}"
+                    enhanced_text = f"Section: {hierarchy_context}\n{enhanced_text}"
                 
                 # Add key terms (limited)
                 if chunk.key_terms:
                     terms_context = ", ".join(chunk.key_terms[:3])
-                    enhanced_text = f"{enhanced_text}\\nKey terms: {terms_context}"
+                    enhanced_text = f"{enhanced_text}\nKey terms: {terms_context}"
                 
                 texts.append(enhanced_text)
             
@@ -157,9 +168,28 @@ class HybridSearchEngine:
         
         self.sparse_index = BM25Okapi(corpus)
 
+    def _get_query_embedding(self, query: str) -> np.ndarray:
+        """Get query embedding with caching"""
+        # Use simple cache key (query text)
+        if query in self._query_embedding_cache:
+            logger.debug(f"Using cached embedding for query: {query[:50]}...")
+            return self._query_embedding_cache[query]
+        
+        # Generate new embedding
+        embedding = self.embedding_model.encode([query], normalize_embeddings=True)[0]
+        
+        # Cache with size limit
+        self._query_embedding_cache[query] = embedding
+        if len(self._query_embedding_cache) > self.QUERY_CACHE_SIZE:
+            # Remove oldest entry (first key)
+            oldest_key = next(iter(self._query_embedding_cache))
+            del self._query_embedding_cache[oldest_key]
+        
+        return embedding
+
     def search(self, query: str, top_k: int = 20, 
               sparse_weight: float = None, dense_weight: float = None) -> List[SearchResult]:
-        """Perform optimized hybrid search"""
+        """Perform optimized hybrid search with caching"""
         if not self.chunks_metadata:
             return []
         
@@ -197,7 +227,10 @@ class HybridSearchEngine:
         
         # Sort and get top candidates
         results.sort(key=lambda x: x.hybrid_score, reverse=True)
-        top_candidates = results[:min(top_k * 2, len(results))]
+        
+        # Use configuration for candidate selection
+        candidate_multiplier = self.config_manager.get('SEARCH_CANDIDATE_MULTIPLIER', 2) if self.config_manager else 2
+        top_candidates = results[:min(top_k * candidate_multiplier, len(results))]
         
         # Rerank if available
         if self.reranker and len(top_candidates) > 1:
@@ -206,8 +239,8 @@ class HybridSearchEngine:
         return top_candidates[:top_k]
 
     def _dense_search(self, query: str) -> List[float]:
-        """Perform dense search using embeddings"""
-        query_embedding = self.embedding_model.encode([query], normalize_embeddings=True)[0]
+        """Perform dense search using embeddings with caching"""
+        query_embedding = self._get_query_embedding(query)
         
         scores = []
         for chunk_embedding in self.dense_index:
@@ -259,7 +292,9 @@ class HybridSearchEngine:
             
             for result, score in zip(results, rerank_scores):
                 result.rerank_score = float(score)
-                result.hybrid_score = result.hybrid_score * 0.7 + result.rerank_score * 0.3
+                # Use class constants for weights
+                result.hybrid_score = (result.hybrid_score * self.RERANK_HYBRID_WEIGHT + 
+                                     result.rerank_score * self.RERANK_SCORE_WEIGHT)
             
             results.sort(key=lambda x: x.hybrid_score, reverse=True)
             
@@ -267,5 +302,6 @@ class HybridSearchEngine:
             logger.warning(f"Reranking failed: {str(e)}")
         
         return results
+
 
 __all__ = ['HybridSearchEngine', 'HAS_BM25']

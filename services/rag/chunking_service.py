@@ -12,24 +12,24 @@ from .text_processing import TextProcessor
 
 class SemanticChunker:
     """Advanced semantic chunking with improved efficiency"""
+
+    # Compile patterns once at class level
+    HEADER_PATTERNS = [
+        re.compile(r'^(#{1,6})\s+(.+)$'),
+        re.compile(r'^(\d+(?:\.\d+)*)\s+(.+)$'),
+        re.compile(r'^([A-Z][A-Z\s]{2,20}):?\s*$'),
+        re.compile(r'^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*):?\s*$'),
+    ]
     
+    LIST_PATTERNS = [
+        re.compile(r'^\s*(?:[-•*]|\d+\.|\([a-z]\))\s+'),
+        re.compile(r'^\s*(?:[A-Z]\.|\d+\))\s+'),
+    ]
+
     def __init__(self, target_chunk_size: int = 300, overlap_size: int = 50):
         self.target_chunk_size = target_chunk_size
         self.overlap_size = overlap_size
         self.text_processor = TextProcessor()
-        
-        # Compile patterns once
-        self.header_patterns = [
-            re.compile(r'^(#{1,6})\s+(.+)$'),
-            re.compile(r'^(\d+(?:\.\d+)*)\s+(.+)$'),
-            re.compile(r'^([A-Z][A-Z\s]{2,20}):?\s*$'),
-            re.compile(r'^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*):?\s*$'),
-        ]
-        
-        self.list_patterns = [
-            re.compile(r'^\s*(?:[-•*]|\d+\.|\([a-z]\))\s+'),
-            re.compile(r'^\s*(?:[A-Z]\.|\d+\))\s+'),
-        ]
 
     def chunk_document(self, text: str, metadata: Dict[str, Any] = None) -> List[SemanticChunk]:
         """Create semantically coherent chunks with improved efficiency"""
@@ -101,7 +101,7 @@ class SemanticChunker:
 
     def _match_header(self, line: str) -> Optional[Tuple[int, str]]:
         """Match header patterns using compiled regex"""
-        for i, pattern in enumerate(self.header_patterns):
+        for i, pattern in enumerate(self.HEADER_PATTERNS):  # ✅ FIXED: Use class attribute
             match = pattern.match(line)
             if match:
                 level_indicator = match.group(1)
@@ -125,7 +125,7 @@ class SemanticChunker:
         lines = [line.strip() for line in content.split('\n') if line.strip()]
         
         # Check for lists using compiled patterns
-        list_lines = sum(1 for line in lines if any(pattern.match(line) for pattern in self.list_patterns))
+        list_lines = sum(1 for line in lines if any(pattern.match(line) for pattern in self.LIST_PATTERNS))  # ✅ FIXED: Use class attribute
         if list_lines > len(lines) * 0.5:
             return 'list'
         
@@ -180,7 +180,7 @@ class SemanticChunker:
         
         for line in lines:
             line_tokens = len(line.split())
-            is_new_item = any(pattern.match(line.strip()) for pattern in self.list_patterns)
+            is_new_item = any(pattern.match(line.strip()) for pattern in self.LIST_PATTERNS)  # ✅ FIXED: Use class attribute
             
             if (is_new_item and current_tokens > self.target_chunk_size * 0.7 and current_chunk_lines):
                 chunk_content = '\n'.join(current_chunk_lines)
@@ -237,5 +237,6 @@ class SemanticChunker:
             key_term_words = sum(len(term.split()) for term in chunk.key_terms)
             chunk.semantic_density = key_term_words / total_words if total_words > 0 else 0.0
             chunk.token_count = total_words
+
 
 __all__ = ['SemanticChunker']

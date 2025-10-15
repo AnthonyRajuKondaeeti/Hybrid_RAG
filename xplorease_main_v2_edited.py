@@ -304,19 +304,26 @@ def generate_contextual_questions_from_chunks(chunks):
     
     return cleaned_questions
 
-def generate_sample_questions_from_chunks(rag_service, chunks):
+def generate_sample_questions_from_chunks(rag_service, chunks=None, session_id=None):
     """Generate sample questions from chunks with fallback strategies"""
     try:
-        logger.info(f"Attempting to generate questions from {len(chunks) if chunks else 0} chunks")
+        logger.info(f"Attempting to generate questions from {len(chunks) if chunks else 0} chunks, session_id: {session_id}")
         
-        # Debug: Log chunk content previews
-        if chunks:
+        # Prioritize session-based generation if session_id is provided
+        if session_id:
+            logger.info(f"Using session-based question generation for session: {session_id}")
+            questions = rag_service.generate_sample_questions(session_id=session_id)
+        elif chunks:
+            # Debug: Log chunk content previews
             for i, chunk in enumerate(chunks[:3]):
                 content_preview = chunk.page_content[:150] if hasattr(chunk, 'page_content') else str(chunk)[:150]
                 logger.debug(f"Chunk {i+1} preview: {content_preview}...")
-        
-        # Try LLM-based question generation first
-        questions = rag_service.generate_sample_questions(chunks)
+            
+            # Try chunk-based question generation
+            questions = rag_service.generate_sample_questions(chunks=chunks)
+        else:
+            logger.warning("No session_id or chunks provided, using fallback questions")
+            questions = rag_service.generate_sample_questions()
         
         logger.info(f"RAG service returned {len(questions) if questions else 0} questions")
         
@@ -327,7 +334,7 @@ def generate_sample_questions_from_chunks(rag_service, chunks):
             if cleaned_q:
                 cleaned_questions.append(f"{i+1}. {cleaned_q}")
         
-        logger.info(f"Generated {len(cleaned_questions)} questions using RAG service LLM")
+        logger.info(f"Generated {len(cleaned_questions)} questions using RAG service")
         return cleaned_questions
     except Exception as llm_error:
         logger.warning(f"LLM-based question generation failed: {llm_error}")
@@ -471,6 +478,39 @@ def generate_simple_qr_code(chat_url, qr_name):
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     return img
+
+@app.route("/", methods=["GET"])
+def index():
+    """API Information - Root endpoint"""
+    return jsonify({
+        "success": True,
+        "message": "XplorEase RAG System API",
+        "version": "2.0",
+        "status": "running",
+        "endpoints": {
+            "process_file": {
+                "method": "POST",
+                "description": "Upload and process documents",
+                "url": "/process_file"
+            },
+            "answer_question": {
+                "method": "POST", 
+                "description": "Ask questions about uploaded documents",
+                "url": "/answer_question"
+            },
+            "generate_sample_questions": {
+                "method": "POST",
+                "description": "Generate sample questions from documents", 
+                "url": "/generate_sample_questions"
+            },
+            "healthcheck": {
+                "method": "GET/POST",
+                "description": "Health check endpoint",
+                "url": "/healthcheck"
+            }
+        },
+        "documentation": "Enhanced RAG system with semantic search, anti-hallucination, and conversation memory"
+    })
 
 @app.route(f"/process_file", methods=["POST"])
 # @jwt_required  # JWT authentication disabled
@@ -637,8 +677,9 @@ def process_file():  # Removed current_user parameter since JWT is disabled
                     # Store in enhanced RAG service
                     chunks_result = rag_service.store_document_chunks(
                         result['chunks'], 
-                        session_text,
-                        result['metadata']
+                        session_text,  # file_id
+                        result['metadata'],
+                        session_id  # session_id
                     )
                     
                     if chunks_result.get('success', True):
@@ -668,7 +709,7 @@ def process_file():  # Removed current_user parameter since JWT is disabled
                 try:
                     doc_result = document_service.process_document(local_path, session_text, original_filename)
                     if doc_result['success']:
-                        rag_result = rag_service.store_document_chunks(doc_result['chunks'], session_text, doc_result['metadata'])
+                        rag_result = rag_service.store_document_chunks(doc_result['chunks'], session_text, doc_result['metadata'], session_id)
                         if rag_result.get('success', True):
                             processed_files.append({
                                 'filename': original_filename,
@@ -724,46 +765,15 @@ def process_file():  # Removed current_user parameter since JWT is disabled
         # Generate automatic sample questions after successful file processing
         sample_questions = []
         try:
-            # Try multiple search strategies to get better content for questions
-            search_queries = [
-                "main topic introduction abstract summary",
-                "methodology approach framework research",
-                "conclusion findings results analysis"
-            ]
+            # Use session-based RAG pipeline for automatic question generation
+            logger.info(f"Generating automatic sample questions for session: {session_id}")
+            sample_questions = rag_service.generate_sample_questions(session_id=session_id)
             
-            best_search_results = []
-            for query in search_queries:
-                try:
-                    results = rag_service._search_with_file_filter(query, session_text)
-                    if results:
-                        best_search_results.extend(results[:3])  # Take top 3 from each query
-                except Exception as e:
-                    logger.warning(f"Search query '{query}' failed: {e}")
-                    continue
+            if not sample_questions or len(sample_questions) < 3:
+                logger.warning("Session-based generation insufficient, trying fallback")
+                sample_questions = rag_service.generate_sample_questions()  # Fallback
             
-            if best_search_results:
-                # Remove duplicates and take best results
-                seen_content = set()
-                unique_results = []
-                for result in best_search_results:
-                    if hasattr(result, 'chunk') and hasattr(result.chunk, 'content'):
-                        content_preview = result.chunk.content[:100]
-                        if content_preview not in seen_content:
-                            seen_content.add(content_preview)
-                            unique_results.append(result)
-                
-                # Convert search results to Document objects for compatibility
-                chunks = convert_search_results_to_documents(unique_results[:5])
-                
-                if chunks:
-                    sample_questions = generate_sample_questions_from_chunks(rag_service, chunks)
-                    logger.info(f"Generated {len(sample_questions)} automatic sample questions for session {session_id}")
-                else:
-                    logger.warning("No chunks retrieved from search results, using fallback questions")
-                    sample_questions = generate_questions_from_mongodb_session(email, session_id)
-            else:
-                logger.warning(f"No search results found for session {session_id}, using fallback questions")
-                sample_questions = generate_questions_from_mongodb_session(email, session_id)
+            logger.info(f"Generated {len(sample_questions)} automatic sample questions for session {session_id}")
                 
         except Exception as question_error:
             logger.warning(f"Failed to generate automatic sample questions: {question_error}")
@@ -1040,61 +1050,19 @@ def generate_sample_questions():  # Removed current_user parameter since JWT is 
                 # Get RAG service
                 rag_service = get_or_create_rag_service(session_id, user_name)
                 
-                # Let RAG service handle chunk retrieval internally with improved search
+                # Use session-based RAG pipeline for question generation
                 try:
-                    # Use multiple search strategies to get better content for questions
-                    search_queries = [
-                        "main topic introduction abstract summary",
-                        "methodology approach framework research",
-                        "conclusion findings results analysis"
-                    ]
+                    logger.info(f"Generating questions using session-based RAG pipeline for session: {session_id}")
+                    questions = rag_service.generate_sample_questions(session_id=session_id)
                     
-                    logger.info(f"Starting multi-query search for session {session_id}")
-                    best_search_results = []
-                    for query in search_queries:
-                        try:
-                            logger.debug(f"Searching with query: '{query}'")
-                            results = rag_service._search_with_file_filter(query, session_text)
-                            if results:
-                                logger.debug(f"Query '{query}' returned {len(results)} results")
-                                best_search_results.extend(results[:3])  # Take top 3 from each query
-                            else:
-                                logger.debug(f"Query '{query}' returned no results")
-                        except Exception as e:
-                            logger.warning(f"Search query '{query}' failed: {e}")
-                            continue
-                    
-                    logger.info(f"Total search results collected: {len(best_search_results)}")
-                    
-                    if best_search_results:
-                        # Remove duplicates and take best results
-                        seen_content = set()
-                        unique_results = []
-                        for result in best_search_results:
-                            if hasattr(result, 'chunk') and hasattr(result.chunk, 'content'):
-                                content_preview = result.chunk.content[:100]
-                                if content_preview not in seen_content:
-                                    seen_content.add(content_preview)
-                                    unique_results.append(result)
-                                    logger.debug(f"Added unique result: {content_preview[:50]}...")
-                        
-                        logger.info(f"After deduplication: {len(unique_results)} unique results")
-                        
-                        # Convert search results to Document objects for compatibility
-                        chunks = convert_search_results_to_documents(unique_results[:5])
-                        
-                        if chunks:
-                            logger.info(f"Converted to {len(chunks)} document chunks for question generation")
-                            questions = generate_sample_questions_from_chunks(rag_service, chunks)
-                        else:
-                            logger.warning("No chunks retrieved from search results, trying MongoDB fallback")
-                            questions = generate_questions_from_mongodb_session(email, session_id)
+                    if questions and len(questions) >= 3:
+                        logger.info(f"Successfully generated {len(questions)} session-based questions")
                     else:
-                        logger.warning(f"No search results found for session {session_id}, trying MongoDB fallback")
-                        questions = generate_questions_from_mongodb_session(email, session_id)
+                        logger.warning("Session-based generation returned insufficient questions, using fallback")
+                        questions = rag_service.generate_sample_questions()  # Fallback without session_id
                         
                 except Exception as search_error:
-                    logger.warning(f"RAG service search failed: {search_error}, trying MongoDB fallback")
+                    logger.warning(f"Session-based question generation failed: {search_error}, trying fallback")
                     # Fallback: Generate questions from MongoDB session data
                     questions = generate_questions_from_mongodb_session(email, session_id)
             except Exception as e:
@@ -1260,8 +1228,9 @@ def replace_file():  # Removed current_user parameter since JWT is disabled
                     if result['success']:
                         chunks_result = rag_service.store_document_chunks(
                             result['chunks'], 
-                            session_text,
-                            result['metadata']
+                            session_text,  # file_id
+                            result['metadata'],
+                            session_id  # session_id
                         )
                         
                         if chunks_result.get('success', True):
@@ -1291,8 +1260,9 @@ def replace_file():  # Removed current_user parameter since JWT is disabled
                     if doc_result['success']:
                         rag_result = rag_service.store_document_chunks(
                             doc_result['chunks'],
-                            session_text,
-                            doc_result['metadata']
+                            session_text,  # file_id
+                            doc_result['metadata'],
+                            session_id  # session_id
                         )
                         
                         if rag_result.get('success', True):
@@ -1345,7 +1315,7 @@ def replace_file():  # Removed current_user parameter since JWT is disabled
                 chunks = convert_search_results_to_documents(search_results)
                 
                 if chunks:
-                    new_sample_questions = generate_sample_questions_from_chunks(rag_service, chunks)
+                    new_sample_questions = generate_sample_questions_from_chunks(rag_service, chunks, session_id)
                 else:
                     logger.warning("No chunks retrieved from search results, using MongoDB fallback for new questions")
                     new_sample_questions = generate_questions_from_mongodb_session(email, session_id)
@@ -1434,7 +1404,7 @@ def delete_selected_files():  # Removed current_user parameter since JWT is disa
                             chunks = convert_search_results_to_documents(search_results)
                             
                             if chunks:
-                                updated_sample_questions = generate_sample_questions_from_chunks(rag_service, chunks)
+                                updated_sample_questions = generate_sample_questions_from_chunks(rag_service, chunks, session_id)
                                 logger.info(f"Generated {len(updated_sample_questions)} questions for remaining files")
                             else:
                                 logger.warning("No chunks found for remaining files, using MongoDB fallback")
@@ -1633,8 +1603,9 @@ def append_session_content():
                     if result['success']:
                         chunks_result = rag_service.store_document_chunks(
                             result['chunks'], 
-                            session_text,
-                            result['metadata']
+                            session_text,  # file_id
+                            result['metadata'],
+                            session_id  # session_id
                         )
                         
                         if chunks_result.get('success', True):
