@@ -304,7 +304,7 @@ def generate_contextual_questions_from_chunks(chunks):
     
     return cleaned_questions
 
-def generate_sample_questions_from_chunks(rag_service, chunks=None, session_id=None):
+def generate_sample_questions_from_chunks(rag_service, chunks=None, session_id=None, user_id=None):
     """Generate sample questions from chunks with fallback strategies"""
     try:
         logger.info(f"Attempting to generate questions from {len(chunks) if chunks else 0} chunks, session_id: {session_id}")
@@ -312,7 +312,7 @@ def generate_sample_questions_from_chunks(rag_service, chunks=None, session_id=N
         # Prioritize session-based generation if session_id is provided
         if session_id:
             logger.info(f"Using session-based question generation for session: {session_id}")
-            questions = rag_service.generate_sample_questions(session_id=session_id)
+            questions = rag_service.generate_sample_questions(session_id=session_id, user_id=user_id)
         elif chunks:
             # Debug: Log chunk content previews
             for i, chunk in enumerate(chunks[:3]):
@@ -557,9 +557,13 @@ def process_file():  # Removed current_user parameter since JWT is disabled
                 "status": 400,
                 "errors": ["User does not exist. Please signup."]
             }), 400
+        
+        # Extract user's MongoDB _id to use as user_id for collection naming
+        user_id = user["_id"]["$oid"]  # This is the actual MongoDB ObjectId as string
+        
         user_logs(user_logs_container, email, "File Upload", session_id)
 
-    user_name = str(user["_id"]['$oid']) 
+    user_name = user_id  # Use the same value for backward compatibility 
     
     # Enhanced logo processing
     logo_url = None
@@ -679,7 +683,8 @@ def process_file():  # Removed current_user parameter since JWT is disabled
                         result['chunks'], 
                         session_text,  # file_id
                         result['metadata'],
-                        session_id  # session_id
+                        session_id,  # session_id
+                        user_id  # user_id (MongoDB _id)
                     )
                     
                     if chunks_result.get('success', True):
@@ -709,7 +714,7 @@ def process_file():  # Removed current_user parameter since JWT is disabled
                 try:
                     doc_result = document_service.process_document(local_path, session_text, original_filename)
                     if doc_result['success']:
-                        rag_result = rag_service.store_document_chunks(doc_result['chunks'], session_text, doc_result['metadata'], session_id)
+                        rag_result = rag_service.store_document_chunks(doc_result['chunks'], session_text, doc_result['metadata'], session_id, user_id)
                         if rag_result.get('success', True):
                             processed_files.append({
                                 'filename': original_filename,
@@ -767,7 +772,7 @@ def process_file():  # Removed current_user parameter since JWT is disabled
         try:
             # Use session-based RAG pipeline for automatic question generation
             logger.info(f"Generating automatic sample questions for session: {session_id}")
-            sample_questions = rag_service.generate_sample_questions(session_id=session_id)
+            sample_questions = rag_service.generate_sample_questions(session_id=session_id, user_id=user_id)
             
             if not sample_questions or len(sample_questions) < 3:
                 logger.warning("Session-based generation insufficient, trying fallback")
@@ -846,6 +851,10 @@ def answer_question():
                 "errors": ["Question is required"]
             }), 400
             
+        # Generate unique user_id from MongoDB user _id
+        # This will be set after user lookup from session validation
+        user_id = None
+            
     except Exception as e:
         logger.error(f"Request parsing error: {e}")
         return jsonify({
@@ -871,7 +880,7 @@ def answer_question():
     #     except Exception as e:
     #         logger.warning(f'Language translation failed: {e}')
 
-    # Session validation
+    # Session validation and user lookup
     with MongoClient(server_uri) as mongo_client_server:
         db_server = mongo_client_server[DB]
         user_container = db_server[USER_CONTAINER]
@@ -885,7 +894,9 @@ def answer_question():
                 "errors": ["This session does not exist. Please create your session by uploading your documents."]
             }), 400
 
-    user_name = str(item["_id"])
+    # Extract user's MongoDB _id to use as user_id for collection naming
+    user_id = item["_id"]["$oid"]  # This is the actual MongoDB ObjectId as string
+    user_name = user_id  # Keep backward compatibility
     session_text = user_name + "_" + session_id
     
     try:
@@ -896,12 +907,13 @@ def answer_question():
             # Get or create RAG service for this session
             rag_service = get_or_create_rag_service(session_id, user_name)
             
-            # Use enhanced RAG service with conversation memory
+            # Use enhanced RAG service with conversation memory and user_id
             result = rag_service.answer_question(
                 file_id=session_text,  # Use session_text as file_id for compatibility
                 question=question,
                 conversation_history=conversation_history,
-                session_id=session_id
+                session_id=session_id,
+                user_id=user_id  # Include user_id for collection naming
             )
             
             if result.get('success', True):
@@ -976,6 +988,7 @@ def answer_question():
         # Store Q&A in database
         timestamp = datetime.now().isoformat()
         qa_item = {
+            "user_id": user_id,  # Include user_id for collection naming
             "session_id": session_id,
             "question": original_question,
             "answer": answer,
@@ -1044,7 +1057,8 @@ def generate_sample_questions():  # Removed current_user parameter since JWT is 
                             "errors": ["Invalid session"]
                         }), 400
                 
-                user_name = str(user["_id"])
+                user_name = user["_id"]["$oid"]
+                user_id = user_name  # Same value for consistency
                 session_text = user_name + "_" + session_id
                 
                 # Get RAG service
@@ -1053,7 +1067,7 @@ def generate_sample_questions():  # Removed current_user parameter since JWT is 
                 # Use session-based RAG pipeline for question generation
                 try:
                     logger.info(f"Generating questions using session-based RAG pipeline for session: {session_id}")
-                    questions = rag_service.generate_sample_questions(session_id=session_id)
+                    questions = rag_service.generate_sample_questions(session_id=session_id, user_id=user_id)
                     
                     if questions and len(questions) >= 3:
                         logger.info(f"Successfully generated {len(questions)} session-based questions")
@@ -1156,6 +1170,9 @@ def replace_file():  # Removed current_user parameter since JWT is disabled
                 "status": 400,
                 "errors": ["User or session not found"]
             }), 400
+        
+        # Extract user's MongoDB _id to use as user_id for collection naming
+        user_id = user["_id"]["$oid"]  # This is the actual MongoDB ObjectId as string
 
         # Validate files exist
         session_item = json.loads(dumps(session_container.find_one({
@@ -1230,7 +1247,8 @@ def replace_file():  # Removed current_user parameter since JWT is disabled
                             result['chunks'], 
                             session_text,  # file_id
                             result['metadata'],
-                            session_id  # session_id
+                            session_id,  # session_id
+                            user_id  # user_id (MongoDB _id)
                         )
                         
                         if chunks_result.get('success', True):
@@ -1262,7 +1280,8 @@ def replace_file():  # Removed current_user parameter since JWT is disabled
                             doc_result['chunks'],
                             session_text,  # file_id
                             doc_result['metadata'],
-                            session_id  # session_id
+                            session_id,  # session_id
+                            user_id  # user_id (MongoDB _id)
                         )
                         
                         if rag_result.get('success', True):
@@ -1315,7 +1334,7 @@ def replace_file():  # Removed current_user parameter since JWT is disabled
                 chunks = convert_search_results_to_documents(search_results)
                 
                 if chunks:
-                    new_sample_questions = generate_sample_questions_from_chunks(rag_service, chunks, session_id)
+                    new_sample_questions = generate_sample_questions_from_chunks(rag_service, chunks, session_id, user_id)
                 else:
                     logger.warning("No chunks retrieved from search results, using MongoDB fallback for new questions")
                     new_sample_questions = generate_questions_from_mongodb_session(email, session_id)
@@ -1404,7 +1423,7 @@ def delete_selected_files():  # Removed current_user parameter since JWT is disa
                             chunks = convert_search_results_to_documents(search_results)
                             
                             if chunks:
-                                updated_sample_questions = generate_sample_questions_from_chunks(rag_service, chunks, session_id)
+                                updated_sample_questions = generate_sample_questions_from_chunks(rag_service, chunks, session_id, user_name)
                                 logger.info(f"Generated {len(updated_sample_questions)} questions for remaining files")
                             else:
                                 logger.warning("No chunks found for remaining files, using MongoDB fallback")
@@ -1576,6 +1595,9 @@ def append_session_content():
                     "errors": ["User or session not found"]
                 }), 400
             
+            # Extract user's MongoDB _id to use as user_id for collection naming
+            user_id = user["_id"]["$oid"]  # This is the actual MongoDB ObjectId as string
+            
             user_name = user['_id']['$oid']
             session_text = user_name + "_" + session_id
             
@@ -1605,7 +1627,8 @@ def append_session_content():
                             result['chunks'], 
                             session_text,  # file_id
                             result['metadata'],
-                            session_id  # session_id
+                            session_id,  # session_id
+                            user_id  # user_id (MongoDB _id)
                         )
                         
                         if chunks_result.get('success', True):

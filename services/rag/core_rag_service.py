@@ -57,7 +57,6 @@ class ErrorResponse:
         
         return response
 
-
 @dataclass
 @dataclass
 class SessionSearchResult:
@@ -316,9 +315,9 @@ class EnhancedRAGService:
         
         raise Exception(f"Failed to make API call after {max_retries} attempts")
     
-    def _ensure_collection(self, session_id: str = None):
+    def _ensure_collection(self, session_id: str = None, user_id: str = None):
         """Ensure Qdrant collection exists with proper configuration"""
-        collection_name = self._get_collection_name(session_id)
+        collection_name = self._get_collection_name(session_id, user_id)
         
         try:
             # Check if collection exists
@@ -326,41 +325,59 @@ class EnhancedRAGService:
             existing_names = [col.name for col in collections.collections]
             
             if collection_name not in existing_names:
-                logger.info(f"Creating session collection: {collection_name}")
+                logger.info(f"Creating user-session collection: {collection_name}")
                 self._create_collection(collection_name)
             else:
-                logger.info(f"Session collection {collection_name} already exists")
+                logger.info(f"User-session collection {collection_name} already exists")
                 
         except Exception as e:
             logger.error(f"Failed to ensure collection: {e}")
             raise
     
-    def _get_collection_name(self, session_id: str = None) -> str:
-        """Generate collection name based on session"""
+    def _get_collection_name(self, session_id: str = None, user_id: str = None) -> str:
+        """Generate collection name based on user and session"""
         if session_id:
-            # Use session-specific collection: session_abc123
-            safe_session_id = session_id.replace('_', '-').replace(' ', '-')
-            return f"session_{safe_session_id}"
+            if user_id:
+                # Use user and session-specific collection: user123_abc123
+                safe_user_id = self._sanitize_for_collection_name(user_id)
+                safe_session_id = self._sanitize_for_collection_name(session_id)
+                return f"{safe_user_id}_{safe_session_id}"
+            else:
+                # Fallback to session-only for backward compatibility
+                safe_session_id = self._sanitize_for_collection_name(session_id)
+                return f"session_{safe_session_id}"
         else:
             # Fallback to default collection for backward compatibility
             return self.config_manager.get('COLLECTION_NAME', 'documents')
     
-    def delete_session_collection(self, session_id: str) -> bool:
-        """Delete session-specific collection"""
+    def _sanitize_for_collection_name(self, name: str) -> str:
+        """Sanitize name to be safe for Qdrant collection names"""
+        import re
+        # Convert email to safe format (e.g., user@example.com -> user-example-com)
+        # Replace special characters with dashes and limit length
+        safe_name = re.sub(r'[^a-zA-Z0-9]', '-', name.lower())
+        # Remove consecutive dashes and limit length
+        safe_name = re.sub(r'-+', '-', safe_name)
+        safe_name = safe_name.strip('-')
+        # Limit to 50 characters for reasonable collection names
+        return safe_name[:50]
+    
+    def delete_session_collection(self, session_id: str, user_id: str = None) -> bool:
+        """Delete user-session specific collection"""
         try:
-            collection_name = self._get_collection_name(session_id)
+            collection_name = self._get_collection_name(session_id, user_id)
             collections = self.qdrant_client.get_collections()
             existing_names = [col.name for col in collections.collections]
             
             if collection_name in existing_names:
                 self.qdrant_client.delete_collection(collection_name)
-                logger.info(f"Deleted session collection: {collection_name}")
+                logger.info(f"Deleted user-session collection: {collection_name}")
                 return True
             else:
-                logger.info(f"Session collection {collection_name} does not exist")
+                logger.info(f"User-session collection {collection_name} does not exist")
                 return False
         except Exception as e:
-            logger.error(f"Failed to delete session collection: {e}")
+            logger.error(f"Failed to delete user-session collection: {e}")
             return False
     
     def _create_collection(self, collection_name: str):
@@ -402,17 +419,17 @@ class EnhancedRAGService:
     @with_retry()
     def store_document_chunks(self, chunks: List[Any], file_id: str, 
                             document_metadata: Dict[str, Any], 
-                            session_id: str = None) -> Dict[str, Any]:
+                            session_id: str = None, user_id: str = None) -> Dict[str, Any]:
         """Store document with enhanced semantic chunking and error handling"""
         if not self.qdrant_client:
             return self._create_storage_error_response(
                 'Vector database not available',
-                context={'file_id': file_id, 'session_id': session_id}
+                context={'file_id': file_id, 'session_id': session_id, 'user_id': user_id}
             )
         
         try:
-            # Ensure session collection exists
-            self._ensure_collection(session_id)
+            # Ensure user-session collection exists
+            self._ensure_collection(session_id, user_id)
             
             with performance_timer("Document processing", self.timing_stats):
                 # Check if this is an image file
@@ -448,10 +465,10 @@ class EnhancedRAGService:
                 self.search_engine.index_chunks(semantic_chunks)
                 
                 # Store in vector database
-                storage_result = self._store_chunks_in_qdrant(semantic_chunks, file_id, document_metadata, session_id)
+                storage_result = self._store_chunks_in_qdrant(semantic_chunks, file_id, document_metadata, session_id, user_id)
                 
                 # Store document metadata
-                self._store_document_metadata(file_id, document_metadata, session_id)
+                self._store_document_metadata(file_id, document_metadata, session_id, user_id)
                 
                 self.stats['documents_processed'] += 1
                 
@@ -498,7 +515,7 @@ class EnhancedRAGService:
     
     def _store_chunks_in_qdrant(self, semantic_chunks: List[SemanticChunk], 
                                file_id: str, document_metadata: Dict[str, Any],
-                               session_id: str = None) -> Dict[str, Any]:
+                               session_id: str = None, user_id: str = None) -> Dict[str, Any]:
         """Store semantic chunks in Qdrant with batch processing"""
         from qdrant_client.http import models
         
@@ -514,8 +531,8 @@ class EnhancedRAGService:
                     payload=payload
                 ))
         
-        # Batch upload with session-specific collection
-        return self._batch_upload_to_qdrant(points, session_id)
+        # Batch upload with user-session specific collection
+        return self._batch_upload_to_qdrant(points, session_id, user_id)
     
     def _create_chunk_payload(self, chunk: SemanticChunk, file_id: str, 
                              document_metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -544,9 +561,9 @@ class EnhancedRAGService:
             'extraction_method': getattr(chunk, 'metadata', {}).get('extraction_method', 'standard')
         }
     
-    def _batch_upload_to_qdrant(self, points: List[Any], session_id: str = None) -> Dict[str, Any]:
+    def _batch_upload_to_qdrant(self, points: List[Any], session_id: str = None, user_id: str = None) -> Dict[str, Any]:
         """Upload points to Qdrant in batches"""
-        collection_name = self._get_collection_name(session_id)
+        collection_name = self._get_collection_name(session_id, user_id)
         start_time = time.time()
         batch_size = 100
         total_batches = (len(points) + batch_size - 1) // batch_size
@@ -571,13 +588,13 @@ class EnhancedRAGService:
         
         return {'processing_time': processing_time}
     
-    def _store_document_metadata(self, file_id: str, metadata: Dict[str, Any], session_id: str = None):
-        """Store document metadata in Qdrant with proper session isolation"""
+    def _store_document_metadata(self, file_id: str, metadata: Dict[str, Any], session_id: str = None, user_id: str = None):
+        """Store document metadata in Qdrant with proper user-session isolation"""
         from qdrant_client.http import models
         
         try:
             dummy_embedding = [0.0] * self.embedding_dim
-            collection_name = self._get_collection_name(session_id)
+            collection_name = self._get_collection_name(session_id, user_id)
             
             payload = {
                 'content': f"METADATA:{metadata.get('filename', file_id)}",
@@ -587,7 +604,8 @@ class EnhancedRAGService:
                 'doc_words': metadata.get('total_words', 0),
                 'filename': metadata.get('filename', ''),
                 'created_at': datetime.now().isoformat(),
-                'session_id': session_id
+                'session_id': session_id,
+                'user_id': user_id
             }
             
             self.qdrant_client.upsert(
@@ -603,7 +621,7 @@ class EnhancedRAGService:
             logger.info(f"Metadata stored in collection: {collection_name}")
             
         except Exception as e:
-            logger.error(f"Metadata storage failed for session {session_id}: {str(e)}")
+            logger.error(f"Metadata storage failed for user {user_id}, session {session_id}: {str(e)}")
             raise
     
     def _cache_key(self, file_id: str, question: str) -> str:
@@ -612,12 +630,12 @@ class EnhancedRAGService:
     
     def answer_question(self, file_id: str, question: str, 
                        conversation_history: List[Dict] = None,
-                       session_id: str = None) -> Dict[str, Any]:
+                       session_id: str = None, user_id: str = None) -> Dict[str, Any]:
         """Answer a question using the RAG system with caching"""
         if not self.qdrant_client:
             return self._create_answer_error_response(
                 'Vector database not available',
-                context={'file_id': file_id, 'session_id': session_id}
+                context={'file_id': file_id, 'session_id': session_id, 'user_id': user_id}
             )
         
         # Check cache first
@@ -634,11 +652,11 @@ class EnhancedRAGService:
             start_time = time.time()
             self.stats['questions_processed'] += 1
             
-            # Ensure session collection exists
-            self._ensure_collection(session_id)
+            # Ensure user-session collection exists
+            self._ensure_collection(session_id, user_id)
             
-            # Generate answer using session-specific search results
-            search_results = self._search_in_session(question, session_id, file_id)
+            # Generate answer using user-session specific search results
+            search_results = self._search_in_session(question, session_id, file_id, user_id)
             
             if not search_results or len(search_results) == 0:
                 return self._create_answer_error_response(
@@ -646,6 +664,7 @@ class EnhancedRAGService:
                     context={
                         'file_id': file_id,
                         'session_id': session_id,
+                        'user_id': user_id,
                         'question': question,
                         'suggestion': 'Try rephrasing your question or asking about a different topic from the document.'
                     }
@@ -694,9 +713,10 @@ class EnhancedRAGService:
                 generation_result, search_results, confidence, start_time
             )
             
-            # Add session information
+            # Add user-session information
             result['file_id'] = file_id
             result['session_id'] = session_id
+            result['user_id'] = user_id
             result['cached'] = False
             
             # Cache the result
@@ -769,11 +789,11 @@ class EnhancedRAGService:
         })
         return error_response
     
-    def _search_in_session(self, question: str, session_id: str, file_id: str = None):
-        """Perform enhanced search within session-specific collection for accurate answers"""
+    def _search_in_session(self, question: str, session_id: str, file_id: str = None, user_id: str = None):
+        """Perform enhanced search within user-session specific collection for accurate answers"""
         try:
-            collection_name = self._get_collection_name(session_id)
-            logger.info(f"Performing enhanced search in session collection: {collection_name}")
+            collection_name = self._get_collection_name(session_id, user_id)
+            logger.info(f"Performing enhanced search in user-session collection: {collection_name}")
             
             # Enhanced query processing for better relevance
             processed_question = self._preprocess_question_for_search(question)
@@ -834,7 +854,7 @@ class EnhancedRAGService:
                     if chunk_file_id == file_id:
                         filtered_results.append(result)
                 
-                logger.info(f"After file filtering within session: {len(filtered_results)} results")
+                logger.info(f"After file filtering within user-session: {len(filtered_results)} results")
                 final_results = filtered_results[:self.MAX_SEARCH_RESULTS] if filtered_results else converted_results[:self.MAX_SEARCH_RESULTS]
             else:
                 final_results = converted_results[:self.MAX_SEARCH_RESULTS]
@@ -846,8 +866,8 @@ class EnhancedRAGService:
             return final_results
             
         except Exception as e:
-            logger.error(f"Enhanced session search failed: {str(e)}")
-            logger.warning(f"Session search failed for session {session_id}, returning empty results")
+            logger.error(f"Enhanced user-session search failed: {str(e)}")
+            logger.warning(f"User-session search failed for user {user_id}, session {session_id}, returning empty results")
             return []
     
     def _preprocess_question_for_search(self, question: str) -> str:
@@ -1155,21 +1175,21 @@ Answer:"""
         }
     
     def generate_sample_questions(self, chunks=None, document_metadata: Dict[str, Any] = None, 
-                             session_id: str = None) -> List[str]:
-        """Generate sample questions using RAG pipeline from session documents"""
+                             session_id: str = None, user_id: str = None) -> List[str]:
+        """Generate sample questions using RAG pipeline from user-session documents"""
         try:
             if session_id:
-                return self._generate_questions_from_session(session_id)
+                return self._generate_questions_from_session(session_id, user_id)
             return self._get_fallback_questions()
         except Exception as e:
             logger.warning(f"Sample question generation failed: {str(e)}")
             return self._get_fallback_questions()
     
-    def _generate_questions_from_session(self, session_id: str) -> List[str]:
-        """Generate questions using RAG pipeline from session documents"""
+    def _generate_questions_from_session(self, session_id: str, user_id: str = None) -> List[str]:
+        """Generate questions using RAG pipeline from user-session documents"""
         try:
-            collection_name = self._get_collection_name(session_id)
-            logger.info(f"Retrieving content from session collection: {collection_name}")
+            collection_name = self._get_collection_name(session_id, user_id)
+            logger.info(f"Retrieving content from user-session collection: {collection_name}")
             
             # Get sample content from session collection
             sample_queries = [
@@ -1183,8 +1203,8 @@ Answer:"""
             all_content = []
             for query in sample_queries:
                 try:
-                    # Use session search to get relevant content
-                    search_results = self._search_in_session(query, session_id)
+                    # Use user-session search to get relevant content
+                    search_results = self._search_in_session(query, session_id, None, user_id)
                     for result in search_results[:2]:  # Take top 2 results per query
                         if hasattr(result, 'chunk') and hasattr(result.chunk, 'content'):
                             content = result.chunk.content.strip()
@@ -1195,12 +1215,12 @@ Answer:"""
                     continue
             
             if not all_content:
-                logger.warning("No content found in session collection")
+                logger.warning("No content found in user-session collection")
                 return self._get_fallback_questions()
             
             # Combine content for analysis
             combined_content = " ".join(all_content[:10])  # Limit to avoid token limits
-            logger.info(f"Analyzing {len(combined_content)} characters from session documents")
+            logger.info(f"Analyzing {len(combined_content)} characters from user-session documents")
             
             # Generate questions using LLM with RAG content
             if hasattr(self, 'llm') and self.llm:
@@ -1210,7 +1230,7 @@ Answer:"""
                 return self._generate_questions_from_content(combined_content)
                 
         except Exception as e:
-            logger.error(f"Session-based question generation failed: {e}")
+            logger.error(f"User-session based question generation failed: {e}")
             return self._get_fallback_questions()
     
     def _generate_questions_with_llm(self, content: str) -> List[str]:
