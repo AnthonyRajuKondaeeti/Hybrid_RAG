@@ -863,6 +863,7 @@ class EnhancedRAGService:
             final_results.sort(key=lambda x: x.combined_score, reverse=True)
             
             logger.info(f"Returning {len(final_results)} high-quality results for answer generation")
+            # print(final_results)
             return final_results
             
         except Exception as e:
@@ -1162,7 +1163,8 @@ Answer:"""
                     'chunk_type': getattr(result.chunk, 'chunk_type', 'text') if hasattr(result.chunk, 'chunk_type') else 'text'
                 }
                 sources.append(source_info)
-        
+        # log
+        logger.info(f"Final answer prepared with confidence {confidence:.2f} in {processing_time:.2f}s")
         return {
             'success': True,
             'answer': clean_answer,

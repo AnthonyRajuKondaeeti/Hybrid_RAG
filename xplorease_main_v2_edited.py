@@ -1048,7 +1048,7 @@ def generate_sample_questions():  # Removed current_user parameter since JWT is 
                 with MongoClient(server_uri) as mongo_client_server:
                     db_server = mongo_client_server[DB]
                     user_container = db_server[USER_CONTAINER]
-                    user = user_container.find_one({"email": email, "session_id": {'$in': [session_id]}})
+                    user = json.loads(dumps(user_container.find_one({"email": email, "session_id": {'$in': [session_id]}})))
                     
                     if not user:
                         return jsonify({
