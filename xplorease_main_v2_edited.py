@@ -885,7 +885,7 @@ def answer_question():
         db_server = mongo_client_server[DB]
         user_container = db_server[USER_CONTAINER]
         session_container = db_server[SESSION_CONTAINER]
-        item = user_container.find_one({"session_id": session_id})
+        item = json.loads(dumps(user_container.find_one({"session_id": session_id})))
         
         if not item:
             return jsonify({
