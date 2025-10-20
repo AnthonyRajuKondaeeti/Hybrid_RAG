@@ -10,11 +10,10 @@ from .models import SemanticChunk, SearchResult
 from .protocols import ChunkProcessor, SearchEngine
 from .core_rag_service import EnhancedRAGService
 from .chunking_service import SemanticChunker
-from .search_engines import HybridSearchEngine
-from .anti_hallucination import AntiHallucinationPrompts
+from .search_engines import HybridSearchEngine, HAS_BM25
 from .confidence_calculator import ConfidenceCalculator
 from .image_analysis import ImageAnalysisService
-from .text_processing import TextProcessor
+from .text_processing import TextProcessor, HAS_NLTK
 
 __all__ = [
     'SemanticChunk',
@@ -24,7 +23,6 @@ __all__ = [
     'EnhancedRAGService',
     'SemanticChunker',
     'HybridSearchEngine',
-    'AntiHallucinationPrompts',
     'ConfidenceCalculator',
     'ImageAnalysisService',
     'TextProcessor'

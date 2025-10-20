@@ -27,7 +27,6 @@ from langchain_mistralai.chat_models import ChatMistralAI
 from .models import SemanticChunk, SearchResult
 from .chunking_service import SemanticChunker
 from .search_engines import HybridSearchEngine
-from .anti_hallucination import AntiHallucinationPrompts
 from .confidence_calculator import ConfidenceCalculator
 from .image_analysis import ImageAnalysisService
 from .text_processing import TextProcessor
@@ -230,9 +229,6 @@ class EnhancedRAGService:
             reranker=self.reranker,
             config_manager=self.config_manager
         )
-        
-        # Initialize anti-hallucination prompts
-        self.anti_hallucination = AntiHallucinationPrompts()
         
         # Initialize confidence calculator
         self.confidence_calculator = ConfidenceCalculator()
@@ -603,14 +599,26 @@ class EnhancedRAGService:
                 context={'file_id': file_id, 'session_id': session_id}
             )
     
-    def _create_storage_error_response(self, message: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Create standardized error response for storage operations"""
-        return ErrorResponse.create(
+    def _create_error_response(self, message: str, error_type: str = 'general_error', 
+                              context: Dict[str, Any] = None, 
+                              additional_fields: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Unified error response creation - replaces 3 duplicate functions"""
+        error_response = ErrorResponse.create(
             error_message=message,
-            error_type='storage_error',
+            error_type=error_type,
             retry_recommended=True,
             context=context or {}
         )
+        
+        # Add type-specific fields
+        if additional_fields:
+            error_response.update(additional_fields)
+            
+        return error_response
+
+    def _create_storage_error_response(self, message: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Create standardized error response for storage operations - DEPRECATED: Use _create_error_response"""
+        return self._create_error_response(message, 'storage_error', context)
     
     def _classify_error(self, error_msg: str) -> str:
         """Classify error type for better handling"""
@@ -893,20 +901,13 @@ class EnhancedRAGService:
         return unique_chunks
     
     def _create_answer_error_response(self, message: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Create standardized error response for answer generation"""
-        error_response = ErrorResponse.create(
-            error_message=message,
-            error_type='answer_generation_error',
-            retry_recommended=True,
-            context=context or {}
-        )
-        # Add answer-specific fields
-        error_response.update({
+        """Create standardized error response for answer generation - DEPRECATED: Use _create_error_response"""
+        answer_specific_fields = {
             'answer': '',
             'confidence': 0.0,
             'processing_time': 0.0
-        })
-        return error_response
+        }
+        return self._create_error_response(message, 'answer_generation_error', context, answer_specific_fields)
     
     def _search_in_session(self, question: str, session_id: str, user_id: str, file_id: str = None):
         """Perform enhanced search within user-session specific collection for accurate answers"""
@@ -1099,69 +1100,81 @@ class EnhancedRAGService:
         except Exception as e:
             logger.warning(f"Adaptive threshold calculation failed: {e}, using fallback")
             return 0.05
-    
-    def _create_enhanced_anti_hallucination_prompt(self, question: str, context_chunks: List[str], content_type: str = "general") -> str:
-        """Create enhanced prompts that minimize hallucinations and ensure accurate, concise answers"""
+
+    # === CONSOLIDATED PROMPT TEMPLATES ===
+    class PromptTemplates:
+        """Centralized prompt management - reduces ~400 lines to ~100"""
         
-        # Combine context with source numbering and quality filtering
-        numbered_context = ""
-        relevant_chunks = []
-        
-        # Check if citations are enabled in config
-        enable_citations = self.config_manager.get('ENABLE_CITATIONS', False)
-        
-        # Filter and prioritize most relevant chunks
-        if enable_citations:
-            # Use numbered sources for citations
-            for i, chunk in enumerate(context_chunks[:3], 1):  # Limit to 3 most relevant chunks
-                if len(chunk.strip()) > self.MIN_CHUNK_LENGTH:  # Only use substantial chunks
-                    numbered_context += f"\n[Source {i}]: {chunk.strip()}\n"
-                    relevant_chunks.append(chunk)
+        @staticmethod
+        def create_answer_prompt(question: str, context_chunks: List[str], 
+                               enable_citations: bool = False, 
+                               min_chunk_length: int = 30) -> str:
+            """Unified prompt creation for all answer types"""
+            # Process context efficiently
+            numbered_context = ""
+            relevant_chunks = []
             
-            if not relevant_chunks:
-                numbered_context = f"\n[Source 1]: {context_chunks[0] if context_chunks else 'No relevant content found'}\n"
-        else:
-            # Use plain context without numbered sources
-            for chunk in context_chunks[:3]:  # Limit to 3 most relevant chunks
-                if len(chunk.strip()) > self.MIN_CHUNK_LENGTH:  # Only use substantial chunks
-                    numbered_context += f"\n{chunk.strip()}\n\n"
-                    relevant_chunks.append(chunk)
+            if enable_citations:
+                # Use numbered sources for citations
+                for i, chunk in enumerate(context_chunks[:3], 1):
+                    if len(chunk.strip()) > min_chunk_length:
+                        numbered_context += f"\n[Source {i}]: {chunk.strip()}\n"
+                        relevant_chunks.append(chunk)
+                if not relevant_chunks:
+                    numbered_context = f"\n[Source 1]: {context_chunks[0] if context_chunks else 'No relevant content found'}\n"
+            else:
+                # Use plain context without numbered sources
+                for chunk in context_chunks[:3]:
+                    if len(chunk.strip()) > min_chunk_length:
+                        numbered_context += f"\n{chunk.strip()}\n\n"
+                        relevant_chunks.append(chunk)
+                if not relevant_chunks:
+                    numbered_context = f"\n{context_chunks[0] if context_chunks else 'No relevant content found'}\n"
             
-            if not relevant_chunks:
-                numbered_context = f"\n{context_chunks[0] if context_chunks else 'No relevant content found'}\n"
-        
-        # Create enhanced prompt for accurate and concise answers
-        citation_instruction = "- Include source numbers in brackets [1], [2] when referencing specific information" if enable_citations else "- Do not include source citations or reference numbers"
-        
-        enhanced_prompt = f"""You are an expert document analyst. Answer the user's question using ONLY the provided source material. Be accurate, document-relevant, and concise while preserving all key information.
+            citation_instruction = ("- Include source numbers in brackets [1], [2] when referencing specific information" 
+                                  if enable_citations else "- Do not include source citations or reference numbers")
+            
+            return f"""You are an expert document analyst. Answer using ONLY the provided source material. Be accurate and concise.
 
 STRICT GUIDELINES:
 1. Base your answer EXCLUSIVELY on the provided sources
-2. If the sources don't contain the answer, clearly state this
+2. If sources don't contain the answer, clearly state this
 3. Be specific and factual - avoid generalizations
-4. Include ALL essential information, definitions, and key details
-5. Preserve important context, methods, findings, and implications
-6. Do not add external knowledge or assumptions
-7. Prioritize completeness of key information over brevity
+4. Include ALL essential information and key details
+5. Do not add external knowledge or assumptions
 
-CONTEXT FROM DOCUMENTS:
-{numbered_context}
+CONTEXT: {numbered_context}
 
-USER QUESTION: {question}
+QUESTION: {question}
 
-RESPONSE REQUIREMENTS:
-- Start directly with the answer (no preamble like "Based on the document...")
-- Use specific facts and details from the sources
-- Include key definitions, methods, findings, or implications
-- If uncertain or information is incomplete, acknowledge this
-- Aim for 3-5 sentences but include all essential information
+REQUIREMENTS:
+- Start directly with the answer
+- Use specific facts from sources
+- 3-5 sentences with all essential information
 {citation_instruction}
-- Do not sacrifice important details for brevity
 
 Answer:"""
 
-        return enhanced_prompt
-    
+        @staticmethod  
+        def create_question_prompt(content: str) -> str:
+            """Detailed question generation prompt - maintains original quality"""
+            return f"""Based on the following document content, generate 5 specific and meaningful questions that would help someone understand the key aspects of this content. The questions should be:
+
+1. Specific to the content (not generic)
+2. Focus on main topics, methods, findings, and applications
+3. Be clear and concise
+4. Help explore different aspects of the document
+
+Content:
+{content[:2000]}
+
+Generate exactly 5 questions, one per line, numbered 1-5:"""
+
+    def _create_enhanced_anti_hallucination_prompt(self, question: str, context_chunks: List[str], content_type: str = "general") -> str:
+        """Create enhanced prompts that minimize hallucinations and ensure accurate, concise answers - DEPRECATED: Use PromptTemplates"""
+        enable_citations = self.config_manager.get('ENABLE_CITATIONS', False)
+        return self.PromptTemplates.create_answer_prompt(question, context_chunks, enable_citations, self.MIN_CHUNK_LENGTH)
+
     def _generate_enhanced_answer_with_prompt(self, enhanced_prompt: str, search_results: List,
                                            conversation_history: List[Dict] = None, 
                                            conversation_context: str = "") -> Dict[str, Any]:
@@ -1402,16 +1415,7 @@ Answer:"""
     def _generate_questions_with_llm(self, content: str) -> List[str]:
         """Generate questions using LLM based on document content"""
         try:
-            question_prompt = f"""Based on the following document content, generate 5 specific and meaningful questions that would help someone understand the key aspects of this content. The questions should be:
-1. Specific to the content (not generic)
-2. Focus on main topics, methods, findings, and applications
-3. Be clear and concise
-4. Help explore different aspects of the document
-
-Content:
-{content[:2000]}
-
-Generate exactly 5 questions, one per line, numbered 1-5:"""
+            question_prompt = self.PromptTemplates.create_question_prompt(content)
 
             response = self._rate_limited_llm_call(question_prompt)
             questions_text = response.content if hasattr(response, 'content') else str(response)
@@ -1421,11 +1425,14 @@ Generate exactly 5 questions, one per line, numbered 1-5:"""
             for line in questions_text.split('\n'):
                 line = line.strip()
                 if line and any(line.startswith(f"{i}.") for i in range(1, 6)):
-                    # Clean up the question
+                    # Extract the question text after the number
                     question = line.split('.', 1)[1].strip() if '.' in line else line
-                    if question and not question.endswith('?'):
-                        question += '?'
-                    questions.append(f"{len(questions) + 1}. {question}")
+                    if question:
+                        # Ensure question ends with ?
+                        if not question.endswith('?'):
+                            question += '?'
+                        # Keep original numbering and full question
+                        questions.append(question)
             
             if len(questions) >= 3:
                 logger.info(f"Generated {len(questions)} LLM-based questions")

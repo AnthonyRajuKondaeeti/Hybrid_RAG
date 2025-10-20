@@ -13,7 +13,6 @@ from .rag.protocols import ChunkProcessor, SearchEngine
 from .rag.core_rag_service import EnhancedRAGService
 from .rag.chunking_service import SemanticChunker
 from .rag.search_engines import HybridSearchEngine, HAS_BM25
-from .rag.anti_hallucination import AntiHallucinationPrompts
 from .rag.confidence_calculator import ConfidenceCalculator
 from .rag.image_analysis import ImageAnalysisService
 from .rag.text_processing import TextProcessor, HAS_NLTK
@@ -38,7 +37,6 @@ __all__ = [
     # Core components
     'SemanticChunker',
     'HybridSearchEngine',
-    'AntiHallucinationPrompts',
     'ConfidenceCalculator',
     'ImageAnalysisService',
     'TextProcessor',
