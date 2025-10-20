@@ -100,13 +100,13 @@ Upload Session B → Collection: user2_def456
 
 #### Key Benefits
 
-| Feature               | Traditional RAG           | Session-Based RAG             |
-| --------------------- | ------------------------- | --------------------------------- |
-| Context Isolation     | Mixed documents           | Clean session boundaries          |
-| Chat Continuity       | No memory                 | Full conversation history         |
-| Document Linking      | Generic search            | Session-specific results          |
-| User Experience       | One-time interaction      | Persistent workspace              |
-| Performance           | Large collection overhead | Optimized session-specific search |
+| Feature           | Traditional RAG           | Session-Based RAG                 |
+| ----------------- | ------------------------- | --------------------------------- |
+| Context Isolation | Mixed documents           | Clean session boundaries          |
+| Chat Continuity   | No memory                 | Full conversation history         |
+| Document Linking  | Generic search            | Session-specific results          |
+| User Experience   | One-time interaction      | Persistent workspace              |
+| Performance       | Large collection overhead | Optimized session-specific search |
 
 #### Session Lifecycle
 
@@ -180,12 +180,12 @@ graph TD
 
 #### Performance Benefits
 
-| Metric                   | Before Rate Limiting  | With Rate Limiting  |
-| ------------------------ | --------------------- | ----------------------- |
-| API Errors               | 15-20% (429 errors)   | <1% error rate          |
-| Response Consistency     | Variable timing       | Predictable performance |
-| Service Stability        | Frequent failures     | 99.9% uptime            |
-| Concurrent Users         | Limited by API limits | Scalable with queuing   |
+| Metric               | Before Rate Limiting  | With Rate Limiting      |
+| -------------------- | --------------------- | ----------------------- |
+| API Errors           | 15-20% (429 errors)   | <1% error rate          |
+| Response Consistency | Variable timing       | Predictable performance |
+| Service Stability    | Frequent failures     | 99.9% uptime            |
+| Concurrent Users     | Limited by API limits | Scalable with queuing   |
 
 ### Performance Optimizations
 
@@ -207,12 +207,12 @@ def _calculate_adaptive_threshold(self, session_id, scores):
 
 #### Benchmark Results
 
-| Operation               | V2.0 Performance | V2.1 Performance | Improvement     |
-| ----------------------- | ---------------- | -------------------- | --------------- |
-| Session Search          | 2.5s average     | 1.8s average         | 28% faster      |
-| Question Generation     | 8s               | 5.2s                 | 35% faster      |
-| Document Processing     | 12s              | 9.5s                 | 21% faster      |
-| API Success Rate        | 85%              | 99.1%                | 16% improvement |
+| Operation           | V2.0 Performance | V2.1 Performance | Improvement     |
+| ------------------- | ---------------- | ---------------- | --------------- |
+| Session Search      | 2.5s average     | 1.8s average     | 28% faster      |
+| Question Generation | 8s               | 5.2s             | 35% faster      |
+| Document Processing | 12s              | 9.5s             | 21% faster      |
+| API Success Rate    | 85%              | 99.1%            | 16% improvement |
 
 ## Advanced RAG Pipeline
 
@@ -254,32 +254,35 @@ Our Enhanced RAG Pipeline represents a quantum leap beyond traditional implement
 
 ### Pipeline Architecture Comparison
 
-| Feature                | Traditional RAG          | Xplorease V2.1                    |
-| ---------------------- | ------------------------ | ------------------------------------- |
-| Collections            | Single shared collection | Session-based isolated collections    |
-| Retrieval              | Single embedding model   | Hybrid dense + sparse + re-ranking    |
-| Chunking               | Fixed-size segments      | Semantic-aware + overlapping          |
-| Context                | Single-turn queries      | Multi-turn session-persistent memory  |
-| Sources                | Text documents only      | Multi-modal (text, images, tables)    |
-| Confidence             | No scoring               | Multi-level confidence metrics        |
-| Rate Limiting          | No protection            | Enterprise-grade API protection       |
-| Fallbacks              | Hard failures            | Graceful degradation strategies       |
-| Performance            | Basic caching            | Adaptive thresholds + smart caching   |
-| Session Management     | No persistence           | Full session isolation and continuity |
+| Feature            | Traditional RAG          | Xplorease V2.1                        |
+| ------------------ | ------------------------ | ------------------------------------- |
+| Collections        | Single shared collection | Session-based isolated collections    |
+| Retrieval          | Single embedding model   | Hybrid dense + sparse + re-ranking    |
+| Chunking           | Fixed-size segments      | Semantic-aware + overlapping          |
+| Context            | Single-turn queries      | Multi-turn session-persistent memory  |
+| Sources            | Text documents only      | Multi-modal (text, images, tables)    |
+| Confidence         | No scoring               | Multi-level confidence metrics        |
+| Rate Limiting      | No protection            | Enterprise-grade API protection       |
+| Fallbacks          | Hard failures            | Graceful degradation strategies       |
+| Performance        | Basic caching            | Adaptive thresholds + smart caching   |
+| Session Management | No persistence           | Full session isolation and continuity |
 
 ### Key Innovations
 
 1. Session-Aware Multi-Stage Retrieval:
+
    ```
    Query → Session Collection → Semantic Search → Keyword Search → Re-ranking → Context Assembly
    ```
 
 2. Rate-Limited Intelligent Response Generation:
+
    ```
    Context + Session History → Intent Analysis → Rate-Limited API → Specialized Prompting → Response + Sources
    ```
 
 3. Production-Grade Quality Assurance:
+
    ```
    Response → Confidence Scoring → Source Verification → Session-Specific Citation Linking
    ```
@@ -362,11 +365,13 @@ curl -X GET "http://localhost:5000/healthcheck"
 **Note**: JWT authentication is currently disabled in the development version. API endpoints are accessible without authentication tokens for development purposes.
 
 For production deployment, JWT authentication should be re-enabled by:
+
 1. Uncommenting JWT imports in the main application file
 2. Implementing proper JWT token generation and validation
 3. Adding the `@jwt_required` decorator to protected endpoints
 
 Development API Usage:
+
 ```http
 Content-Type: application/json
 # No Authorization header required in development mode
@@ -524,13 +529,13 @@ Response:
 
 ## Supported Formats
 
-| Category          | Formats                      | Processing         |
-| ----------------- | ---------------------------- | ------------------ |
-| Documents         | PDF, DOCX, TXT, MD, RTF, ODT | Text extraction    |
-| Spreadsheets      | XLSX, XLSM, CSV              | Data parsing       |
-| Presentations     | PPT, PPTX                    | Content extraction |
-| Images            | JPG, PNG, BMP, TIFF          | OCR processing     |
-| Web               | HTML, EPUB                   | Content parsing    |
+| Category      | Formats                      | Processing         |
+| ------------- | ---------------------------- | ------------------ |
+| Documents     | PDF, DOCX, TXT, MD, RTF, ODT | Text extraction    |
+| Spreadsheets  | XLSX, XLSM, CSV              | Data parsing       |
+| Presentations | PPT, PPTX                    | Content extraction |
+| Images        | JPG, PNG, BMP, TIFF          | OCR processing     |
+| Web           | HTML, EPUB                   | Content parsing    |
 
 Limits: 50MB per file, 10 files per request
 
@@ -589,32 +594,32 @@ curl -X POST "http://localhost:5000/answer_question" \
 
 #### Processing Performance (V2.1)
 
-| Operation            | Small (<1MB) | Medium (1-10MB) | Large (10-50MB) | Enterprise (50MB+) |
-| -------------------- | ------------ | --------------- | --------------- | ------------------ |
-| Upload & Process     | <1.5s        | <8s             | <25s            | <45s               |
-| Session Creation     | <0.5s        | <1s             | <2s             | <3s                |
-| Question Answer      | <2s          | <3.5s           | <5s             | <7s                |
-| Sample Questions     | <3s          | <5s             | <8s             | <12s               |
-| OCR Processing       | <4s          | <12s            | <35s            | <60s               |
+| Operation        | Small (<1MB) | Medium (1-10MB) | Large (10-50MB) | Enterprise (50MB+) |
+| ---------------- | ------------ | --------------- | --------------- | ------------------ |
+| Upload & Process | <1.5s        | <8s             | <25s            | <45s               |
+| Session Creation | <0.5s        | <1s             | <2s             | <3s                |
+| Question Answer  | <2s          | <3.5s           | <5s             | <7s                |
+| Sample Questions | <3s          | <5s             | <8s             | <12s               |
+| OCR Processing   | <4s          | <12s            | <35s            | <60s               |
 
 #### Session Management Performance
 
-| Metric                | V2.0 (Single Collection) | V2.1 (Session Collections) |
-| --------------------- | ------------------------ | ------------------------------ |
-| Search Latency        | 2.5s                     | 1.8s (-28%)                    |
-| Context Accuracy      | 78%                      | 92% (+18%)                     |
-| Memory Usage          | High (all documents)     | Optimized (session-specific)   |
-| Concurrent Users      | Limited                  | Highly scalable                |
-| Session Isolation     | None                     | 100% isolated                  |
+| Metric            | V2.0 (Single Collection) | V2.1 (Session Collections)   |
+| ----------------- | ------------------------ | ---------------------------- |
+| Search Latency    | 2.5s                     | 1.8s (-28%)                  |
+| Context Accuracy  | 78%                      | 92% (+18%)                   |
+| Memory Usage      | High (all documents)     | Optimized (session-specific) |
+| Concurrent Users  | Limited                  | Highly scalable              |
+| Session Isolation | None                     | 100% isolated                |
 
 #### Rate Limiting Performance
 
-| Scenario                 | Without Rate Limiting | With Rate Limiting |
-| ------------------------ | --------------------- | ---------------------- |
-| API Error Rate           | 15-20% (429 errors)   | <1%                    |
-| Response Consistency     | Highly variable       | Predictable ±0.5s      |
-| Service Uptime           | 85%                   | 99.1%                  |
-| Peak Load Handling       | Frequent failures     | Graceful degradation   |
+| Scenario             | Without Rate Limiting | With Rate Limiting   |
+| -------------------- | --------------------- | -------------------- |
+| API Error Rate       | 15-20% (429 errors)   | <1%                  |
+| Response Consistency | Highly variable       | Predictable ±0.5s    |
+| Service Uptime       | 85%                   | 99.1%                |
+| Peak Load Handling   | Frequent failures     | Graceful degradation |
 
 ### Performance Tuning
 
@@ -636,12 +641,12 @@ CACHE_SIZE = 1000            # Larger result cache
 
 #### Hardware Recommendations
 
-| Use Case           | CPU       | RAM   | Storage | Performance Level |
-| ------------------ | --------- | ----- | ------- | ----------------- |
-| Development        | 2 cores   | 4GB   | 20GB    | Basic testing     |
-| Small Business     | 4 cores   | 8GB   | 50GB    | <100 docs/day     |
-| Enterprise         | 8+ cores  | 16GB+ | 200GB+  | 1000+ docs/day    |
-| High-Volume        | 16+ cores | 32GB+ | 500GB+  | Unlimited scale   |
+| Use Case       | CPU       | RAM   | Storage | Performance Level |
+| -------------- | --------- | ----- | ------- | ----------------- |
+| Development    | 2 cores   | 4GB   | 20GB    | Basic testing     |
+| Small Business | 4 cores   | 8GB   | 50GB    | <100 docs/day     |
+| Enterprise     | 8+ cores  | 16GB+ | 200GB+  | 1000+ docs/day    |
+| High-Volume    | 16+ cores | 32GB+ | 500GB+  | Unlimited scale   |
 
 ## Configuration
 
@@ -868,7 +873,7 @@ Perfect Context Boundaries       Perfect Context Boundaries
 
 ```
 Xplorease_V2-main/
-├── config.py                   # Configuration management  
+├── config.py                   # Configuration management
 ├── xplorease_main_v2_edited.py # Main Flask application (development & production)
 ├── requirements.txt            # Python dependencies
 ├── .env                        # Environment variables (not in repo)
@@ -908,7 +913,8 @@ Xplorease_V2-main/
 ├── uploads/                   # Temporary file storage
 └── __pycache__/              # Python cache files
 ```
-```
+
+````
 
 ### Data Flow Architecture
 
@@ -935,7 +941,7 @@ sequenceDiagram
     Q-->>R: Confirm Storage
     R-->>A: Processing Complete
     A-->>C: Session ID + File ID
-```
+````
 
 #### Question-Answer Flow
 
@@ -1134,6 +1140,6 @@ Multi-Format Support | Production Stability | Comprehensive Testing
 
 ---
 
-Built with love by the Xplorease Team
+Built with love (and slightly unhealthy dedication) by Anthony Raju Kondaveeti 🫅 & the Xplorease Team.
 
 Need Help? [Open an Issue](https://github.com/AnthonyRajuKondaeeti/Xplorease_V2/issues) | Have Ideas? [Start a Discussion](https://github.com/AnthonyRajuKondaeeti/Xplorease_V2/discussions)
