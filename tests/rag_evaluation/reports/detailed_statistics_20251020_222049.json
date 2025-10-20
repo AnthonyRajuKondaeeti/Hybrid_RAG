@@ -1,0 +1,80 @@
+{
+  "overview": {
+    "total_queries": 40,
+    "successful_queries": 40,
+    "success_rate": 100.0,
+    "overall_score_mean": 0.6141336589681833,
+    "overall_score_median": 0.5936652625152625,
+    "overall_score_std": 0.15497606453130247,
+    "avg_response_time": 0.27593104243278505,
+    "response_time_std": 0.0950706482066223,
+    "excellent_rate": 17.5,
+    "good_rate": 50.0
+  },
+  "by_category": {
+    "technical": {
+      "count": 10,
+      "mean_score": 0.6642826129426129,
+      "median_score": 0.6684930402930402,
+      "std_score": 0.14785563741626065,
+      "avg_time": 0.27703688144683836,
+      "excellent_rate": 30.0
+    },
+    "business": {
+      "count": 10,
+      "mean_score": 0.6163344291948265,
+      "median_score": 0.569688961038961,
+      "std_score": 0.1693430069828802,
+      "avg_time": 0.27495431900024414,
+      "excellent_rate": 30.0
+    },
+    "academic": {
+      "count": 10,
+      "mean_score": 0.6322555924262335,
+      "median_score": 0.6085967140921409,
+      "std_score": 0.1536514278844045,
+      "avg_time": 0.27917530536651614,
+      "excellent_rate": 10.0
+    },
+    "structured": {
+      "count": 10,
+      "mean_score": 0.5436620013090601,
+      "median_score": 0.5228079365079366,
+      "std_score": 0.14576141058538872,
+      "avg_time": 0.2725576639175415,
+      "excellent_rate": 0.0
+    }
+  },
+  "by_complexity": {},
+  "performance_metrics": {
+    "accuracy": {
+      "mean": 0.5086917299727098,
+      "median": 0.41830357142857144,
+      "std": 0.21290109216916536,
+      "min": 0.07345238095238095,
+      "max": 1.0
+    },
+    "relevance": {
+      "mean": 0.47346786791639733,
+      "median": 0.4111111111111111,
+      "std": 0.2638115141789974,
+      "min": 0.07692307692307693,
+      "max": 0.9777777777777779
+    },
+    "quality": {
+      "mean": 0.7484999999999999,
+      "median": 0.7777777777777778,
+      "std": 0.15434522012971902,
+      "min": 0.5111111111111111,
+      "max": 1.0
+    },
+    "technical": {
+      "mean": 0.9506,
+      "median": 0.96,
+      "std": 0.018664102387972403,
+      "min": 0.904,
+      "max": 0.972
+    }
+  },
+  "quality_analysis": {}
+}

@@ -1,0 +1,955 @@
+{
+  "technical": [
+    {
+      "query_id": "technical_01",
+      "query_text": "What are the minimum system requirements for XploreaseAPI?",
+      "expected_answer": "The minimum system requirements are Python 3.8 or higher, 4GB RAM (8GB recommended), 2GB free storage space, and Windows 10+, macOS 10.15+, or Ubuntu 18.04+.",
+      "actual_answer": "The minimum system requirements are Python 3.8 or higher, 4GB RAM (8GB recommended), 2GB free storage space, and Windows 10+, macOS 10.15+, or Ubuntu 18.04+.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.825,
+      "quality_score": 1.0,
+      "technical_score": 0.96,
+      "overall_score": 0.81025,
+      "response_time": 0.1835951805114746,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:31.626606"
+    },
+    {
+      "query_id": "technical_02",
+      "query_text": "What is the rate limit for the authentication endpoint?",
+      "expected_answer": "The authentication endpoint (/api/v2/auth/login) has a rate limit of 5 requests per minute.",
+      "actual_answer": "The authentication endpoint (/api/v2/auth/login) has a rate limit of 5 requests per minute.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.7,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.96,
+      "overall_score": 0.7345555555555555,
+      "response_time": 0.17932629585266113,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:31.626606"
+    },
+    {
+      "query_id": "technical_03",
+      "query_text": "What is the maximum file size for document uploads?",
+      "expected_answer": "The maximum file size for document uploads is 50MB, with support for PDF, DOCX, TXT, CSV, and JSON formats.",
+      "actual_answer": "The maximum file size for document uploads is 50MB, with support for PDF, DOCX, TXT, CSV, and JSON formats.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.9777777777777779,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.96,
+      "overall_score": 0.804,
+      "response_time": 0.18247413635253906,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:31.626606"
+    },
+    {
+      "query_id": "technical_04",
+      "query_text": "What is the default database port in the configuration?",
+      "expected_answer": "The default database port is 5432.",
+      "actual_answer": "The default database port is 5432.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.825,
+      "quality_score": 0.6711111111111111,
+      "technical_score": 0.96,
+      "overall_score": 0.7444722222222222,
+      "response_time": 0.18603134155273438,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:31.626606"
+    },
+    {
+      "query_id": "technical_05",
+      "query_text": "What is the emergency support phone number?",
+      "expected_answer": "The emergency hotline is +1-800-XPLOREASE.",
+      "actual_answer": "The emergency hotline is +1-800-XPLOREASE.",
+      "accuracy_score": 1.0,
+      "relevance_score": 0.6285714285714286,
+      "quality_score": 0.7244444444444444,
+      "technical_score": 0.96,
+      "overall_score": 0.846031746031746,
+      "response_time": 0.1731257438659668,
+      "confidence_score": 0.9,
+      "key_facts_found": [
+        "The",
+        "1",
+        "800",
+        "XPLOREASE"
+      ],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:31.626606"
+    },
+    {
+      "query_id": "technical_06",
+      "query_text": "If search queries are taking more than 2 seconds, what troubleshooting steps should be taken and what performance targets should be expected after optimization?",
+      "expected_answer": "For slow query performance (>2 seconds), the issue is likely database indexing problems or large result sets. The solution is to rebuild search indexes using 'xplorease-admin reindex'. After optimization, expect average response times of 150ms for search queries with a target uptime of 99.9%.",
+      "actual_answer": "For slow query performance (>2 seconds), rebuild search indexes using 'xplorease-admin reindex'. After optimization, expect average response times of 150ms for search queries.",
+      "accuracy_score": 0.5038461538461538,
+      "relevance_score": 0.34285714285714286,
+      "quality_score": 0.8888888888888888,
+      "technical_score": 0.916,
+      "overall_score": 0.6024305250305251,
+      "response_time": 0.39251208305358887,
+      "confidence_score": 0.79,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:31.626606"
+    },
+    {
+      "query_id": "technical_07",
+      "query_text": "What security measures must be implemented for a production deployment and what are the maintenance requirements?",
+      "expected_answer": "Production deployments require SSL/TLS encryption (mandatory), API key rotation every 90 days, session timeout of 30 minutes, and passwords with minimum 12 characters including alphanumeric and special characters. Regular maintenance includes key rotation and security monitoring.",
+      "actual_answer": "The minimum system requirements are Python 3.8 or higher, 4GB RAM (8GB recommended), 2GB free storage space, and Windows 10+, macOS 10.15+, or Ubuntu 18.04+.",
+      "accuracy_score": 0.36874999999999997,
+      "relevance_score": 0.4,
+      "quality_score": 1.0,
+      "technical_score": 0.916,
+      "overall_score": 0.5849,
+      "response_time": 0.36571717262268066,
+      "confidence_score": 0.79,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:31.626606"
+    },
+    {
+      "query_id": "technical_08",
+      "query_text": "Based on the performance metrics, how many concurrent users can the system handle and what would be the infrastructure requirements?",
+      "expected_answer": "Based on 1000 requests per minute throughput and 150ms average response time, the system can handle approximately 166 concurrent users (1000 req/min ÷ 60 sec = 16.67 req/sec ÷ 0.15 sec = ~111 users, with overhead ~166). Infrastructure requires minimum 8GB RAM (preferably more for large document processing), database with 20 connection pool size, and proper indexing.",
+      "actual_answer": "The minimum system requirements are Python 3.8 or higher, 4GB RAM (8GB recommended), 2GB free storage space, and Windows 10+, macOS 10.15+, or Ubuntu 18.04+.",
+      "accuracy_score": 0.37884615384615383,
+      "relevance_score": 0.3666666666666667,
+      "quality_score": 1.0,
+      "technical_score": 0.928,
+      "overall_score": 0.5824051282051282,
+      "response_time": 0.3686859607696533,
+      "confidence_score": 0.8200000000000001,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:31.626606"
+    },
+    {
+      "query_id": "technical_09",
+      "query_text": "What would be the complete integration process for a new application including authentication, file upload, and search functionality?",
+      "expected_answer": "Complete integration requires: 1) Authentication via POST /api/v2/auth/login with username/password to obtain JWT token, 2) Document upload via POST /api/v2/documents/upload (max 50MB, formats: PDF/DOCX/TXT/CSV/JSON), 3) Search implementation via GET /api/v2/documents/search with query parameter. Consider rate limits (5 auth requests/minute), processing time (30-120 seconds), and response times (200-500ms for search).",
+      "actual_answer": "The maximum file size for document uploads is 50MB, with support for PDF, DOCX, TXT, CSV, and JSON formats.",
+      "accuracy_score": 0.3833333333333333,
+      "relevance_score": 0.4222222222222222,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.96,
+      "overall_score": 0.5584444444444444,
+      "response_time": 0.3725433349609375,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:31.626606"
+    },
+    {
+      "query_id": "technical_10",
+      "query_text": "What are the operational costs and benefits of deploying XploreaseAPI in a high-availability production environment?",
+      "expected_answer": "High-availability deployment requires infrastructure supporting 99.9% uptime target, processing 50 documents per minute with 1000 requests per minute throughput. Benefits include 150ms average search response time and enterprise-grade security. Costs include 24/7 monitoring, regular API key rotation every 90 days, and sufficient hardware (8GB+ RAM, indexed database). The system supports up to 3 concurrent uploads and provides fuzzy matching with semantic search capabilities.",
+      "actual_answer": "The XploreaseAPI provides comprehensive documentation with installation guides, API endpoints, and troubleshooting information.",
+      "accuracy_score": 0.07345238095238095,
+      "relevance_score": 0.2,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.9359999999999999,
+      "overall_score": 0.37533650793650797,
+      "response_time": 0.36635756492614746,
+      "confidence_score": 0.84,
+      "key_facts_found": [
+        "API"
+      ],
+      "key_facts_missing": [
+        "3",
+        "99.9%",
+        "Benefits",
+        "50",
+        "0",
+        "150",
+        "Costs",
+        "90",
+        "100",
+        "7",
+        "High",
+        "8",
+        "24",
+        "RAM"
+      ],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:31.626606"
+    }
+  ],
+  "business": [
+    {
+      "query_id": "business_01",
+      "query_text": "What was TechCorp's total revenue in Q3 2024?",
+      "expected_answer": "TechCorp's total revenue in Q3 2024 was $485.2 million.",
+      "actual_answer": "TechCorp's total revenue in Q3 2024 was $485.2 million.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.95,
+      "quality_score": 0.8888888888888888,
+      "technical_score": 0.96,
+      "overall_score": 0.8192777777777778,
+      "response_time": 0.18645000457763672,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:34.388265"
+    },
+    {
+      "query_id": "business_02",
+      "query_text": "What was the year-over-year revenue growth rate in Q3 2024?",
+      "expected_answer": "The year-over-year revenue growth rate was 22.9% (from $394.8 million in Q3 2023 to $485.2 million in Q3 2024).",
+      "actual_answer": "TechCorp's total revenue in Q3 2024 was $485.2 million.",
+      "accuracy_score": 0.44375,
+      "relevance_score": 0.6000000000000001,
+      "quality_score": 0.8888888888888888,
+      "technical_score": 0.96,
+      "overall_score": 0.6492777777777778,
+      "response_time": 0.18683528900146484,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:34.388265"
+    },
+    {
+      "query_id": "business_03",
+      "query_text": "How many employees does TechCorp have as of Q3 2024?",
+      "expected_answer": "TechCorp has 12,450 employees as of Q3 2024.",
+      "actual_answer": "TechCorp has 12,450 employees as of Q3 2024, representing a 15% increase year-over-year.",
+      "accuracy_score": 0.6125,
+      "relevance_score": 0.7,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.96,
+      "overall_score": 0.7195555555555556,
+      "response_time": 0.17800021171569824,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:34.388265"
+    },
+    {
+      "query_id": "business_04",
+      "query_text": "What is TechCorp's market share in the cloud services sector?",
+      "expected_answer": "TechCorp holds an 18.5% market share in the cloud services sector, up from 16.2%.",
+      "actual_answer": "TechCorp holds an 18.5% market share in the cloud services sector, up from 16.2%.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.8,
+      "quality_score": 1.0,
+      "technical_score": 0.96,
+      "overall_score": 0.8039999999999999,
+      "response_time": 0.18396973609924316,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:34.388265"
+    },
+    {
+      "query_id": "business_05",
+      "query_text": "How much did TechCorp invest in R&D during Q3 2024?",
+      "expected_answer": "TechCorp invested $58.3 million in R&D during Q3 2024, representing 12% of revenue.",
+      "actual_answer": "TechCorp invested $58.3 million in R&D during Q3 2024, representing 12% of revenue.",
+      "accuracy_score": 1.0,
+      "relevance_score": 0.5,
+      "quality_score": 0.8888888888888888,
+      "technical_score": 0.96,
+      "overall_score": 0.8467777777777779,
+      "response_time": 0.179215669631958,
+      "confidence_score": 0.9,
+      "key_facts_found": [
+        "3",
+        "202",
+        "$58.3",
+        "12%",
+        "4"
+      ],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:34.388265"
+    },
+    {
+      "query_id": "business_06",
+      "query_text": "Analyze TechCorp's profitability margins and explain how they compare across different business segments.",
+      "expected_answer": "TechCorp achieved a gross profit margin of 66.3% ($321.8M), operating margin of 20.1% ($97.4M), and net margin of 15.1% ($73.2M). By segment, Cloud Services generates 61.5% of revenue ($298.4M), AI Solutions 25.7% ($124.7M), and Traditional Software 12.8% ($62.1M). The high overall margins indicate strong pricing power and operational efficiency, with Cloud Services being the dominant revenue driver.",
+      "actual_answer": "TechCorp delivered exceptional performance in Q3 2024 with strong revenue growth and improved operational efficiency across all business units.",
+      "accuracy_score": 0.38913043478260867,
+      "relevance_score": 0.23076923076923078,
+      "quality_score": 0.5111111111111111,
+      "technical_score": 0.904,
+      "overall_score": 0.4511667038275734,
+      "response_time": 0.36252379417419434,
+      "confidence_score": 0.76,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "system_error",
+        "issues": [
+          "System error in response"
+        ],
+        "suggestions": [
+          "Check system logs and error handling"
+        ]
+      },
+      "timestamp": "2025-10-20T22:17:34.388265"
+    },
+    {
+      "query_id": "business_07",
+      "query_text": "Evaluate TechCorp's customer acquisition and retention performance, and assess what this indicates about business sustainability.",
+      "expected_answer": "TechCorp added 2,847 new enterprise clients with a 94.2% retention rate (vs 87% industry benchmark) and $142,000 average contract value (12% quarterly increase). The 68 NPS score (vs 45 industry average) and high retention rate indicate strong customer satisfaction and business sustainability. This customer health suggests predictable recurring revenue and expansion opportunities.",
+      "actual_answer": "TechCorp delivered exceptional performance in Q3 2024 with strong revenue growth and improved operational efficiency across all business units.",
+      "accuracy_score": 0.3909090909090909,
+      "relevance_score": 0.34285714285714286,
+      "quality_score": 0.5111111111111111,
+      "technical_score": 0.972,
+      "overall_score": 0.4901001443001443,
+      "response_time": 0.37835001945495605,
+      "confidence_score": 0.9299999999999999,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "system_error",
+        "issues": [
+          "System error in response"
+        ],
+        "suggestions": [
+          "Check system logs and error handling"
+        ]
+      },
+      "timestamp": "2025-10-20T22:17:34.388265"
+    },
+    {
+      "query_id": "business_08",
+      "query_text": "Compare TechCorp's geographic performance and assess the strategic implications of their market distribution.",
+      "expected_answer": "Geographically, North America leads with $267.9M (55.2%), Europe contributes $145.6M (30.0%), and Asia-Pacific $71.7M (14.8%). This shows strong diversification beyond North America while maintaining domestic market leadership. The 2025 strategy to expand into 5 new international markets suggests plans to increase Asia-Pacific and European revenue share, reducing North American dependency.",
+      "actual_answer": "TechCorp delivered exceptional performance in Q3 2024 with strong revenue growth and improved operational efficiency across all business units.",
+      "accuracy_score": 0.37727272727272726,
+      "relevance_score": 0.15384615384615385,
+      "quality_score": 0.5111111111111111,
+      "technical_score": 0.9359999999999999,
+      "overall_score": 0.4319928515928516,
+      "response_time": 0.3629729747772217,
+      "confidence_score": 0.84,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "system_error",
+        "issues": [
+          "System error in response"
+        ],
+        "suggestions": [
+          "Check system logs and error handling"
+        ]
+      },
+      "timestamp": "2025-10-20T22:17:34.388265"
+    },
+    {
+      "query_id": "business_09",
+      "query_text": "What are the primary risks facing TechCorp and how effectively is the company addressing them?",
+      "expected_answer": "TechCorp faces four key risks: cybersecurity threats to cloud infrastructure, semiconductor supply chain disruptions, EU data privacy regulations, and competitive pricing pressure. Mitigation includes $25M cybersecurity investment, diversified suppliers across 3 continents, 15-person compliance team, and enhanced R&D for differentiation. The proactive approach with dedicated resources and budget allocation suggests effective risk management.",
+      "actual_answer": "TechCorp delivered exceptional performance in Q3 2024 with strong revenue growth and improved operational efficiency across all business units.",
+      "accuracy_score": 0.374,
+      "relevance_score": 0.34285714285714286,
+      "quality_score": 0.5111111111111111,
+      "technical_score": 0.948,
+      "overall_score": 0.4797365079365079,
+      "response_time": 0.3527364730834961,
+      "confidence_score": 0.87,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "system_error",
+        "issues": [
+          "System error in response"
+        ],
+        "suggestions": [
+          "Check system logs and error handling"
+        ]
+      },
+      "timestamp": "2025-10-20T22:17:34.388265"
+    },
+    {
+      "query_id": "business_10",
+      "query_text": "Based on Q3 performance and stated initiatives, evaluate TechCorp's growth strategy and projected business trajectory for 2024-2025.",
+      "expected_answer": "TechCorp projects Q4 revenue of $510-525M (19-22% YoY growth) while maintaining 20%+ operating margins. The 2025 strategy includes next-gen AI platform launch, 5 new international markets, $200M acquisition budget, and quantum computing research. With 23% Q3 growth, 94.2% retention, and strong margins, the company is positioned for sustained growth. The combination of organic innovation, geographic expansion, and strategic acquisitions creates multiple growth vectors.",
+      "actual_answer": "The year-over-year revenue growth rate was 22.9% (from $394.8 million in Q3 2023 to $485.2 million in Q3 2024).",
+      "accuracy_score": 0.2540229885057471,
+      "relevance_score": 0.125,
+      "quality_score": 1.0,
+      "technical_score": 0.924,
+      "overall_score": 0.47145919540229886,
+      "response_time": 0.37848901748657227,
+      "confidence_score": 0.81,
+      "key_facts_found": [
+        "3",
+        "202",
+        "The",
+        "5",
+        "4"
+      ],
+      "key_facts_missing": [
+        "22%",
+        "20%",
+        "19",
+        "23%",
+        "94.2%",
+        "$200M",
+        "With",
+        "$510",
+        "AI",
+        "525M"
+      ],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:34.388265"
+    }
+  ],
+  "academic": [
+    {
+      "query_id": "academic_01",
+      "query_text": "Which three transformer models were evaluated in this study?",
+      "expected_answer": "The three transformer models evaluated were BERT, GPT-3, and T5.",
+      "actual_answer": "The three transformer models evaluated were BERT, GPT-3, and T5, tested across multiple NLP tasks including sentiment analysis and named entity recognition.",
+      "accuracy_score": 0.62,
+      "relevance_score": 0.5555555555555556,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.96,
+      "overall_score": 0.6864444444444445,
+      "response_time": 0.19437789916992188,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:37.181856"
+    },
+    {
+      "query_id": "academic_02",
+      "query_text": "How many movie reviews were used in the IMDB dataset for sentiment analysis?",
+      "expected_answer": "50,000 movie reviews were used from the IMDB dataset for sentiment analysis.",
+      "actual_answer": "50,000 movie reviews were used from the IMDB dataset for sentiment analysis.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.8923076923076922,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.96,
+      "overall_score": 0.7826324786324786,
+      "response_time": 0.18886733055114746,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:37.181856"
+    },
+    {
+      "query_id": "academic_03",
+      "query_text": "What GPU hardware was used for the experiments?",
+      "expected_answer": "NVIDIA A100 GPUs with 80GB VRAM were used for the experiments.",
+      "actual_answer": "NVIDIA A100 GPUs with 80GB VRAM were used for the experiments.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.575,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.96,
+      "overall_score": 0.7033055555555555,
+      "response_time": 0.18057465553283691,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:37.181856"
+    },
+    {
+      "query_id": "academic_04",
+      "query_text": "How many parameters does the BERT-Large model have?",
+      "expected_answer": "BERT-Large has 340 million parameters with 24 layers and 1024 hidden units.",
+      "actual_answer": "BERT-Large has 340 million parameters with 24 layers and 1024 hidden units.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.45,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.96,
+      "overall_score": 0.6720555555555555,
+      "response_time": 0.1840531826019287,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:37.181856"
+    },
+    {
+      "query_id": "academic_05",
+      "query_text": "What was the total training time across all experiments?",
+      "expected_answer": "The total training time was 240 hours across all experiments.",
+      "actual_answer": "The total training time was 240 hours across all experiments.",
+      "accuracy_score": 1.0,
+      "relevance_score": 0.9777777777777779,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.96,
+      "overall_score": 0.9440000000000001,
+      "response_time": 0.18861103057861328,
+      "confidence_score": 0.9,
+      "key_facts_found": [
+        "240",
+        "The"
+      ],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:37.181856"
+    },
+    {
+      "query_id": "academic_06",
+      "query_text": "Compare the performance of BERT, GPT-3, and T5 on sentiment analysis and explain which model performed best and why.",
+      "expected_answer": "On sentiment analysis, BERT-Large achieved the highest performance with 94.2% accuracy and 0.942 F1 score, followed by T5-Large (93.5% accuracy, 0.935 F1) and GPT-3 (91.8% accuracy, 0.918 F1). BERT performed best because its bidirectional architecture is specifically designed for understanding tasks like sentiment analysis, while GPT-3's generative focus makes it less optimal for classification tasks.",
+      "actual_answer": "This research investigates transformer-based architectures in NLP tasks, evaluating BERT, GPT-3, and T5 models for performance and efficiency.",
+      "accuracy_score": 0.368,
+      "relevance_score": 0.29411764705882354,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.964,
+      "overall_score": 0.5208849673202615,
+      "response_time": 0.3675386905670166,
+      "confidence_score": 0.91,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:37.181856"
+    },
+    {
+      "query_id": "academic_07",
+      "query_text": "Analyze the trade-offs between model performance and computational efficiency based on the training time and inference speed results.",
+      "expected_answer": "The results show clear efficiency-performance trade-offs: BERT offers the best balance with 94.2% accuracy, 3.2-hour training time, and 45ms inference speed. T5 provides mid-range performance (93.5% accuracy) with moderate costs (4.7 hours training, 67ms inference). GPT-3, while powerful, is least efficient with 91.8% accuracy requiring 12.1 hours training and 120ms inference. For production deployment, BERT offers optimal cost-effectiveness.",
+      "actual_answer": "The total training time was 240 hours across all experiments.",
+      "accuracy_score": 0.368,
+      "relevance_score": 0.1875,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.964,
+      "overall_score": 0.4942305555555555,
+      "response_time": 0.37398266792297363,
+      "confidence_score": 0.91,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [
+          "Complex query requires more detailed response"
+        ],
+        "suggestions": [
+          "Enhance response generation for complex queries"
+        ]
+      },
+      "timestamp": "2025-10-20T22:17:37.181856"
+    },
+    {
+      "query_id": "academic_08",
+      "query_text": "What do the fine-tuning experiments reveal about optimal strategies for resource-constrained environments?",
+      "expected_answer": "The fine-tuning experiments show that LoRA (Low-Rank Adaptation) is optimal for resource-constrained environments, achieving 92% of full fine-tuning performance while reducing memory usage by 40%. Layer Freezing offers 85% performance with 60% reduced training time. Full fine-tuning provides best performance but highest cost, while Prompt Tuning (78% performance, 90% reduced parameters) is suitable for extremely limited resources.",
+      "actual_answer": "This research investigates transformer-based architectures in NLP tasks, evaluating BERT, GPT-3, and T5 models for performance and efficiency.",
+      "accuracy_score": 0.3625,
+      "relevance_score": 0.2833333333333333,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.972,
+      "overall_score": 0.5171888888888889,
+      "response_time": 0.35649967193603516,
+      "confidence_score": 0.9299999999999999,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:37.181856"
+    },
+    {
+      "query_id": "academic_09",
+      "query_text": "What are the key limitations of this study and what future research directions are proposed to address them?",
+      "expected_answer": "Key limitations include limited evaluation on domain-specific tasks, computational cost restrictions preventing comprehensive hyperparameter tuning, and absence of human evaluation metrics. Future research directions include investigating newer architectures (PaLM, LaMDA, ChatGPT), developing domain-specific adaptation strategies, conducting environmental impact analysis, and creating efficient inference optimization techniques.",
+      "actual_answer": "This research investigates transformer-based architectures in NLP tasks, evaluating BERT, GPT-3, and T5 models for performance and efficiency.",
+      "accuracy_score": 0.37926829268292683,
+      "relevance_score": 0.3875,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.94,
+      "overall_score": 0.5451378726287263,
+      "response_time": 0.36939048767089844,
+      "confidence_score": 0.85,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:37.181856"
+    },
+    {
+      "query_id": "academic_10",
+      "query_text": "Based on the study's findings, what specific recommendations would you give to an organization choosing between these models for production deployment?",
+      "expected_answer": "For production deployment, organizations should: 1) Choose BERT for understanding tasks (sentiment analysis, NER) due to superior performance and efficiency, 2) Select GPT-3 for generation tasks despite higher costs, 3) Use T5 for text-to-text scenarios, 4) Implement LoRA fine-tuning for resource constraints (92% performance, 40% memory reduction), 5) Consider hybrid approaches for complex applications (12-15% performance improvement), 6) Prioritize task-specific selection over general performance metrics.",
+      "actual_answer": "The three transformer models evaluated were BERT, GPT-3, and T5, tested across multiple NLP tasks including sentiment analysis and named entity recognition.",
+      "accuracy_score": 0.2292763157894737,
+      "relevance_score": 0.29523809523809524,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.904,
+      "overall_score": 0.45667560568086885,
+      "response_time": 0.38785743713378906,
+      "confidence_score": 0.76,
+      "key_facts_found": [
+        "3",
+        "For",
+        "BERT",
+        "5",
+        "GPT"
+      ],
+      "key_facts_missing": [
+        "Select",
+        "NER",
+        "40%",
+        "15%",
+        "92%",
+        "12",
+        "1",
+        "6",
+        "2",
+        "Choose",
+        "4"
+      ],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:37.181856"
+    }
+  ],
+  "structured": [
+    {
+      "query_id": "structured_01",
+      "query_text": "How many employees are in the dataset?",
+      "expected_answer": "There are 30 employees in the dataset.",
+      "actual_answer": "There are 30 employees in the dataset.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.7714285714285714,
+      "quality_score": 0.6977777777777777,
+      "technical_score": 0.96,
+      "overall_score": 0.7364126984126983,
+      "response_time": 0.17543506622314453,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:39.907433"
+    },
+    {
+      "query_id": "structured_02",
+      "query_text": "What is Sarah Johnson's position and salary?",
+      "expected_answer": "Sarah Johnson is a Marketing Manager with a salary of $78,000.",
+      "actual_answer": "Sarah Johnson is a Marketing Manager with a salary of $78,000.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.4857142857142857,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.96,
+      "overall_score": 0.6809841269841269,
+      "response_time": 0.18238258361816406,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:39.907433"
+    },
+    {
+      "query_id": "structured_03",
+      "query_text": "Which department does Michael Chen work in?",
+      "expected_answer": "Michael Chen works in the Engineering department.",
+      "actual_answer": "Michael Chen works in the Engineering department.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.2857142857142857,
+      "quality_score": 0.7711111111111112,
+      "technical_score": 0.96,
+      "overall_score": 0.6296507936507937,
+      "response_time": 0.18044471740722656,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:39.907433"
+    },
+    {
+      "query_id": "structured_04",
+      "query_text": "Who has the highest salary in the company?",
+      "expected_answer": "Andrew Perez has the highest salary at $115,000, working as a Cloud Architect in Engineering.",
+      "actual_answer": "Andrew Perez has the highest salary at $115,000, working as a Cloud Architect in Engineering.",
+      "accuracy_score": 0.6499999999999999,
+      "relevance_score": 0.7142857142857143,
+      "quality_score": 0.7777777777777778,
+      "technical_score": 0.96,
+      "overall_score": 0.7381269841269841,
+      "response_time": 0.1819324493408203,
+      "confidence_score": 0.9,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:39.907433"
+    },
+    {
+      "query_id": "structured_05",
+      "query_text": "How many employees work in San Francisco?",
+      "expected_answer": "There are 9 employees working in San Francisco.",
+      "actual_answer": "There are 30 employees in the dataset.",
+      "accuracy_score": 0.3833333333333333,
+      "relevance_score": 0.4857142857142857,
+      "quality_score": 0.6977777777777777,
+      "technical_score": 0.96,
+      "overall_score": 0.5583174603174603,
+      "response_time": 0.1716628074645996,
+      "confidence_score": 0.9,
+      "key_facts_found": [
+        "There"
+      ],
+      "key_facts_missing": [
+        "San Francisco",
+        "9"
+      ],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:39.907433"
+    },
+    {
+      "query_id": "structured_06",
+      "query_text": "Calculate the average salary by department and identify which department has the highest average compensation.",
+      "expected_answer": "Engineering has the highest average salary at $88,111 (9 employees), followed by Sales at $72,600 (5 employees), Finance at $71,800 (5 employees), Marketing at $65,600 (5 employees), and HR at $59,750 (4 employees). Engineering's higher average reflects senior technical positions like Cloud Architect ($115,000) and Lead Developer ($110,000).",
+      "actual_answer": "The employee dataset contains 30 employees across different departments including Engineering, Marketing, Sales, HR, and Finance, with locations in San Francisco, New York, Chicago, Austin, and Los Angeles.",
+      "accuracy_score": 0.3662162162162162,
+      "relevance_score": 0.16666666666666666,
+      "quality_score": 0.5111111111111111,
+      "technical_score": 0.948,
+      "overall_score": 0.4325753753753754,
+      "response_time": 0.36438798904418945,
+      "confidence_score": 0.87,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:39.907433"
+    },
+    {
+      "query_id": "structured_07",
+      "query_text": "Analyze the relationship between years of experience and performance ratings, identifying any patterns or outliers.",
+      "expected_answer": "There's a positive correlation between experience and performance ratings. Employees with 8+ years average 4.5 rating (Michael Chen 4.7, Andrew Perez 4.7, Nicole King 4.6), while 1-3 years experience average 3.8 rating. Notable outliers include Megan Nelson (6 years, 4.8 rating - highest overall) and Brandon Wright (1 year, 3.5 rating - lowest overall). Senior employees consistently perform above 4.0 ratings.",
+      "actual_answer": "The employee dataset contains 30 employees across different departments including Engineering, Marketing, Sales, HR, and Finance, with locations in San Francisco, New York, Chicago, Austin, and Los Angeles.",
+      "accuracy_score": 0.3676470588235294,
+      "relevance_score": 0.13333333333333333,
+      "quality_score": 0.5111111111111111,
+      "technical_score": 0.94,
+      "overall_score": 0.42361437908496735,
+      "response_time": 0.37079381942749023,
+      "confidence_score": 0.85,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:39.907433"
+    },
+    {
+      "query_id": "structured_08",
+      "query_text": "Compare salary distributions across different locations and explain any geographic compensation patterns.",
+      "expected_answer": "San Francisco has the highest average salary at $89,778 (9 employees) due to Engineering concentration and cost of living. Austin follows at $73,200 (4 employees), New York at $69,800 (6 employees), Chicago at $64,600 (5 employees), and Los Angeles at $62,000 (3 employees). The pattern reflects tech industry geographic premiums, with San Francisco commanding 44% higher salaries than Los Angeles.",
+      "actual_answer": "The employee dataset contains 30 employees across different departments including Engineering, Marketing, Sales, HR, and Finance, with locations in San Francisco, New York, Chicago, Austin, and Los Angeles.",
+      "accuracy_score": 0.39285714285714285,
+      "relevance_score": 0.3333333333333333,
+      "quality_score": 0.5111111111111111,
+      "technical_score": 0.964,
+      "overall_score": 0.4872984126984127,
+      "response_time": 0.36127781867980957,
+      "confidence_score": 0.91,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:39.907433"
+    },
+    {
+      "query_id": "structured_09",
+      "query_text": "Analyze hiring patterns by year and department, identifying growth trends and strategic workforce changes.",
+      "expected_answer": "Hiring peaked in 2020-2021 with 16 employees (53% of workforce), showing company growth. Engineering dominated hiring with 11 employees (37% of total workforce), indicating tech-focused expansion. 2019 had 7 hires, 2022 had 4 hires, and 2018 had 3 hires. Recent hiring (2021-2022) shows diversification into Sales and Marketing, suggesting business scaling beyond pure technical growth.",
+      "actual_answer": "The employee dataset contains 30 employees across different departments including Engineering, Marketing, Sales, HR, and Finance, with locations in San Francisco, New York, Chicago, Austin, and Los Angeles.",
+      "accuracy_score": 0.38409090909090904,
+      "relevance_score": 0.07692307692307693,
+      "quality_score": 0.5111111111111111,
+      "technical_score": 0.916,
+      "overall_score": 0.412489355089355,
+      "response_time": 0.3640940189361572,
+      "confidence_score": 0.79,
+      "key_facts_found": [],
+      "key_facts_missing": [],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:39.907433"
+    },
+    {
+      "query_id": "structured_10",
+      "query_text": "Evaluate compensation equity across demographics and positions, and recommend optimization strategies for talent retention.",
+      "expected_answer": "Performance-based analysis reveals high performers (4.5+ rating) earn $91,857 average vs $62,636 for lower performers, indicating merit-based compensation. Engineering commands premium salaries ($88,111 avg) reflecting market demands. Retention risks include top performers like Megan Nelson (4.8 rating, $98,000) and Michael Chen (4.7 rating, $110,000). Recommendations: implement performance bonuses for 4.5+ ratings, address potential underpayment in Marketing/HR, and create senior career paths to retain high performers.",
+      "actual_answer": "The employee dataset contains 30 employees across different departments including Engineering, Marketing, Sales, HR, and Finance, with locations in San Francisco, New York, Chicago, Austin, and Los Angeles.",
+      "accuracy_score": 0.12666666666666665,
+      "relevance_score": 0.15384615384615385,
+      "quality_score": 0.5111111111111111,
+      "technical_score": 0.972,
+      "overall_score": 0.33715042735042733,
+      "response_time": 0.3731653690338135,
+      "confidence_score": 0.9299999999999999,
+      "key_facts_found": [
+        "HR",
+        "Engineering"
+      ],
+      "key_facts_missing": [
+        "4.5",
+        "$62,636",
+        "Performance",
+        "$110,000",
+        "$98,000",
+        "4.8",
+        "$91,857",
+        "4.7",
+        "$88,111",
+        "Retention"
+      ],
+      "error_analysis": {
+        "type": "none",
+        "issues": [],
+        "suggestions": []
+      },
+      "timestamp": "2025-10-20T22:17:39.907433"
+    }
+  ]
+}

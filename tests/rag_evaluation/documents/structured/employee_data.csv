@@ -1,0 +1,31 @@
+Employee_ID,Name,Department,Position,Hire_Date,Salary,Performance_Rating,Years_Experience,Location,Manager_ID
+E001,John Smith,Engineering,Senior Software Engineer,2019-03-15,95000,4.2,8,San Francisco,M001
+E002,Sarah Johnson,Marketing,Marketing Manager,2020-07-22,78000,4.5,6,New York,M002
+E003,Michael Chen,Engineering,Lead Developer,2018-11-08,110000,4.7,10,San Francisco,M001
+E004,Emily Davis,Sales,Sales Representative,2021-02-14,55000,3.8,3,Chicago,M003
+E005,David Wilson,Engineering,Software Engineer,2022-01-10,75000,4.1,4,San Francisco,M001
+E006,Lisa Brown,HR,HR Specialist,2019-09-30,62000,4.3,5,New York,M004
+E007,Robert Taylor,Finance,Financial Analyst,2020-05-18,68000,4.0,4,New York,M005
+E008,Jennifer Garcia,Marketing,Content Specialist,2021-08-05,58000,4.2,3,Los Angeles,M002
+E009,William Martinez,Engineering,DevOps Engineer,2019-12-20,88000,4.6,7,San Francisco,M001
+E010,Amanda Rodriguez,Sales,Senior Sales Manager,2018-04-12,92000,4.4,9,Chicago,M003
+E011,Christopher Lee,Engineering,Frontend Developer,2021-11-03,72000,3.9,3,Austin,M006
+E012,Michelle White,Finance,Senior Accountant,2019-06-25,71000,4.1,6,New York,M005
+E013,Daniel Harris,Marketing,Digital Marketing Specialist,2022-03-08,60000,4.0,2,Los Angeles,M002
+E014,Jessica Clark,Engineering,QA Engineer,2020-10-14,69000,4.3,5,San Francisco,M001
+E015,Matthew Lewis,Sales,Account Executive,2021-05-20,63000,3.7,4,Chicago,M003
+E016,Ashley Walker,HR,Recruiter,2020-09-02,59000,4.2,3,Austin,M004
+E017,Kevin Hall,Engineering,Backend Developer,2019-07-11,82000,4.5,6,San Francisco,M001
+E018,Stephanie Allen,Finance,Budget Analyst,2021-01-28,64000,3.8,3,New York,M005
+E019,Ryan Young,Marketing,Social Media Manager,2020-12-16,56000,4.1,2,Los Angeles,M002
+E020,Nicole King,Engineering,Senior QA Engineer,2018-08-09,91000,4.6,8,Austin,M006
+E021,Brandon Wright,Sales,Sales Coordinator,2022-02-23,48000,3.5,1,Chicago,M003
+E022,Samantha Green,HR,Training Specialist,2019-11-19,61000,4.4,4,New York,M004
+E023,Jonathan Adams,Engineering,Mobile Developer,2020-03-26,79000,4.2,5,San Francisco,M001
+E024,Rachel Baker,Finance,Tax Specialist,2021-09-07,67000,4.0,3,Austin,M005
+E025,Tyler Gonzalez,Marketing,Brand Manager,2019-05-13,74000,4.3,7,Los Angeles,M002
+E026,Megan Nelson,Engineering,Data Scientist,2020-01-09,98000,4.8,6,San Francisco,M001
+E027,Jacob Carter,Sales,Regional Sales Director,2017-10-05,105000,4.5,12,Chicago,M003
+E028,Brittany Mitchell,HR,Benefits Administrator,2021-06-11,57000,4.1,2,Austin,M004
+E029,Andrew Perez,Engineering,Cloud Architect,2018-12-03,115000,4.7,9,San Francisco,M001
+E030,Kayla Roberts,Finance,Financial Controller,2019-02-28,89000,4.4,8,New York,M005
