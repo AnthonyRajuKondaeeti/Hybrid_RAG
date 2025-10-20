@@ -7,6 +7,7 @@ all RAG components together.
 
 import os
 import logging
+import re
 import threading
 import time
 import uuid
@@ -315,7 +316,7 @@ class EnhancedRAGService:
         
         raise Exception(f"Failed to make API call after {max_retries} attempts")
     
-    def _ensure_collection(self, session_id: str = None, user_id: str = None):
+    def _ensure_collection(self, session_id: str, user_id: str):
         """Ensure Qdrant collection exists with proper configuration"""
         collection_name = self._get_collection_name(session_id, user_id)
         
@@ -329,46 +330,65 @@ class EnhancedRAGService:
                 self._create_collection(collection_name)
             else:
                 logger.info(f"User-session collection {collection_name} already exists")
+                # Ensure indexes exist for existing collections
+                self._ensure_payload_indexes(collection_name)
                 
         except Exception as e:
             logger.error(f"Failed to ensure collection: {e}")
             raise
     
-    def _get_collection_name(self, session_id: str = None, user_id: str = None) -> str:
-        """Generate collection name based on user and session"""
-        if session_id:
-            if user_id:
-                # Use user and session-specific collection: user123_abc123
-                safe_user_id = self._sanitize_for_collection_name(user_id)
-                safe_session_id = self._sanitize_for_collection_name(session_id)
-                return f"{safe_user_id}_{safe_session_id}"
-            else:
-                # Fallback to session-only for backward compatibility
-                safe_session_id = self._sanitize_for_collection_name(session_id)
-                return f"session_{safe_session_id}"
-        else:
-            # Fallback to default collection for backward compatibility
-            return self.config_manager.get('COLLECTION_NAME', 'documents')
+    def _get_collection_name(self, session_id: str, user_id: str) -> str:
+        """Generate collection name based on user and session - always uses {user_id}_{session_id} format"""
+        if not session_id or not user_id:
+            raise ValueError(f"Both user_id and session_id are required for collection naming. Got user_id='{user_id}', session_id='{session_id}'")
+        
+        # Check for parameter confusion - detect if either parameter contains an underscore
+        if '_' in user_id:
+            logger.warning(f"WARNING: user_id contains underscore: '{user_id}' - this might be session_text passed by mistake!")
+        if '_' in session_id:
+            logger.warning(f"WARNING: session_id contains underscore: '{session_id}' - this might be session_text passed by mistake!")
+            
+        # Always use user and session-specific collection: user123_session456
+        # Keep full format for backward compatibility with existing collections
+        safe_user_id = self._sanitize_for_collection_name(user_id)
+        safe_session_id = self._sanitize_for_collection_name(session_id)
+        collection_name = f"{safe_user_id}_{safe_session_id}"
+        
+        # Debug logging for collection name generation
+        logger.info(f"Collection name generation: user_id='{user_id}' -> '{safe_user_id}', session_id='{session_id}' -> '{safe_session_id}', final='{collection_name}' (length: {len(collection_name)})")
+        
+        return collection_name
+    
+    def create_file_id(self, user_id: str, session_id: str, filename: str) -> str:
+        """Create a consistent file_id that matches the collection naming scheme"""
+        # Use the same sanitization as collection names for consistency
+        safe_user_id = self._sanitize_for_collection_name(user_id)
+        safe_session_id = self._sanitize_for_collection_name(session_id)
+        safe_filename = filename  # Keep filename as-is for readability
+        
+        file_id = f"{safe_user_id}_{safe_session_id}_{safe_filename}"
+        
+        logger.info(f"Created file_id: '{file_id}' for user_id='{user_id}', session_id='{session_id}', filename='{filename}'")
+        return file_id
     
     def _sanitize_for_collection_name(self, name: str) -> str:
-        """Sanitize name to be safe for Qdrant collection names"""
+        """Sanitize name to be safe for Qdrant collection names - use underscores for consistency"""
         import re
-        # Convert email to safe format (e.g., user@example.com -> user-example-com)
-        # Replace special characters with dashes and limit length
-        safe_name = re.sub(r'[^a-zA-Z0-9]', '-', name.lower())
-        # Remove consecutive dashes and limit length
-        safe_name = re.sub(r'-+', '-', safe_name)
-        safe_name = safe_name.strip('-')
-        # Limit to 50 characters for reasonable collection names
-        return safe_name[:50]
+        # Keep alphanumeric and convert special chars to underscores for consistency with file_id format
+        safe_name = re.sub(r'[^a-zA-Z0-9]', '_', str(name))
+        # Remove consecutive underscores
+        safe_name = re.sub(r'_+', '_', safe_name)
+        safe_name = safe_name.strip('_')
+        # Keep full name - no truncation for backward compatibility
+        return safe_name
     
-    def delete_session_collection(self, session_id: str, user_id: str = None) -> bool:
+    def delete_session_collection(self, session_id: str, user_id: str) -> bool:
         """Delete user-session specific collection"""
         try:
             collection_name = self._get_collection_name(session_id, user_id)
             collections = self.qdrant_client.get_collections()
             existing_names = [col.name for col in collections.collections]
-            
+
             if collection_name in existing_names:
                 self.qdrant_client.delete_collection(collection_name)
                 logger.info(f"Deleted user-session collection: {collection_name}")
@@ -380,8 +400,44 @@ class EnhancedRAGService:
             logger.error(f"Failed to delete user-session collection: {e}")
             return False
     
+    def delete_documents_by_file_id(self, file_id: str, session_id: str, user_id: str) -> bool:
+        """Delete specific documents by file_id from the user-session collection"""
+        try:
+            from qdrant_client.http import models
+            
+            collection_name = self._get_collection_name(session_id, user_id)
+            collections = self.qdrant_client.get_collections()
+            existing_names = [col.name for col in collections.collections]
+            
+            if collection_name not in existing_names:
+                logger.warning(f"Collection {collection_name} does not exist")
+                return False
+            
+            # Delete all points with the matching file_id
+            self.qdrant_client.delete(
+                collection_name=collection_name,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="file_id",
+                                match=models.MatchValue(value=file_id)
+                            )
+                        ]
+                    )
+                ),
+                wait=True
+            )
+            
+            logger.info(f"Deleted documents with file_id '{file_id}' from collection '{collection_name}'")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to delete documents with file_id '{file_id}': {e}")
+            return False
+    
     def _create_collection(self, collection_name: str):
-        """Create Qdrant collection with optimized settings"""
+        """Create Qdrant collection with optimized settings and payload indexes"""
         from qdrant_client.http import models
         
         self.qdrant_client.create_collection(
@@ -408,6 +464,62 @@ class EnhancedRAGService:
                 "on_disk": False
             }
         )
+        
+        # Create payload indexes for efficient filtering
+        try:
+            # Index for file_id field (required for individual file deletion)
+            self.qdrant_client.create_payload_index(
+                collection_name=collection_name,
+                field_name="file_id",
+                field_schema=models.PayloadSchemaType.KEYWORD
+            )
+            
+            # Index for session_id field (for session-based operations)
+            self.qdrant_client.create_payload_index(
+                collection_name=collection_name,
+                field_name="session_id", 
+                field_schema=models.PayloadSchemaType.KEYWORD
+            )
+            
+            # Index for user_id field (for user-based operations)
+            self.qdrant_client.create_payload_index(
+                collection_name=collection_name,
+                field_name="user_id",
+                field_schema=models.PayloadSchemaType.KEYWORD
+            )
+            
+            logger.info(f"Created payload indexes for collection '{collection_name}'")
+            
+        except Exception as e:
+            logger.warning(f"Failed to create payload indexes for collection '{collection_name}': {e}")
+            # Collection is still usable, just without optimized filtering
+    
+    def _ensure_payload_indexes(self, collection_name: str):
+        """Ensure payload indexes exist for a collection (for existing collections)"""
+        from qdrant_client.http import models
+        
+        try:
+            # Try to create indexes - Qdrant will ignore if they already exist
+            index_fields = [
+                ("file_id", models.PayloadSchemaType.KEYWORD),
+                ("session_id", models.PayloadSchemaType.KEYWORD), 
+                ("user_id", models.PayloadSchemaType.KEYWORD)
+            ]
+            
+            for field_name, field_type in index_fields:
+                try:
+                    self.qdrant_client.create_payload_index(
+                        collection_name=collection_name,
+                        field_name=field_name,
+                        field_schema=field_type
+                    )
+                    logger.info(f"Ensured index for field '{field_name}' in collection '{collection_name}'")
+                except Exception as field_error:
+                    # Index might already exist, which is fine
+                    logger.debug(f"Index for '{field_name}' in '{collection_name}': {field_error}")
+                    
+        except Exception as e:
+            logger.warning(f"Failed to ensure indexes for collection '{collection_name}': {e}")
     
     def index_documents(self, documents: List[Dict[str, Any]], 
                        collection_name: str = None) -> Dict[str, Any]:
@@ -419,7 +531,7 @@ class EnhancedRAGService:
     @with_retry()
     def store_document_chunks(self, chunks: List[Any], file_id: str, 
                             document_metadata: Dict[str, Any], 
-                            session_id: str = None, user_id: str = None) -> Dict[str, Any]:
+                            session_id: str, user_id: str) -> Dict[str, Any]:
         """Store document with enhanced semantic chunking and error handling"""
         if not self.qdrant_client:
             return self._create_storage_error_response(
@@ -515,7 +627,7 @@ class EnhancedRAGService:
     
     def _store_chunks_in_qdrant(self, semantic_chunks: List[SemanticChunk], 
                                file_id: str, document_metadata: Dict[str, Any],
-                               session_id: str = None, user_id: str = None) -> Dict[str, Any]:
+                               session_id: str, user_id: str) -> Dict[str, Any]:
         """Store semantic chunks in Qdrant with batch processing"""
         from qdrant_client.http import models
         
@@ -561,7 +673,7 @@ class EnhancedRAGService:
             'extraction_method': getattr(chunk, 'metadata', {}).get('extraction_method', 'standard')
         }
     
-    def _batch_upload_to_qdrant(self, points: List[Any], session_id: str = None, user_id: str = None) -> Dict[str, Any]:
+    def _batch_upload_to_qdrant(self, points: List[Any], session_id: str, user_id: str) -> Dict[str, Any]:
         """Upload points to Qdrant in batches"""
         collection_name = self._get_collection_name(session_id, user_id)
         start_time = time.time()
@@ -588,7 +700,7 @@ class EnhancedRAGService:
         
         return {'processing_time': processing_time}
     
-    def _store_document_metadata(self, file_id: str, metadata: Dict[str, Any], session_id: str = None, user_id: str = None):
+    def _store_document_metadata(self, file_id: str, metadata: Dict[str, Any], session_id: str, user_id: str):
         """Store document metadata in Qdrant with proper user-session isolation"""
         from qdrant_client.http import models
         
@@ -632,6 +744,13 @@ class EnhancedRAGService:
                        conversation_history: List[Dict] = None,
                        session_id: str = None, user_id: str = None) -> Dict[str, Any]:
         """Answer a question using the RAG system with caching"""
+        # Ensure both session_id and user_id are provided for consistent collection naming
+        if not session_id or not user_id:
+            return self._create_answer_error_response(
+                'Both session_id and user_id are required for user-session isolation',
+                context={'file_id': file_id, 'session_id': session_id, 'user_id': user_id}
+            )
+            
         if not self.qdrant_client:
             return self._create_answer_error_response(
                 'Vector database not available',
@@ -656,7 +775,7 @@ class EnhancedRAGService:
             self._ensure_collection(session_id, user_id)
             
             # Generate answer using user-session specific search results
-            search_results = self._search_in_session(question, session_id, file_id, user_id)
+            search_results = self._search_in_session(question, session_id, user_id, file_id)
             
             if not search_results or len(search_results) == 0:
                 return self._create_answer_error_response(
@@ -789,7 +908,7 @@ class EnhancedRAGService:
         })
         return error_response
     
-    def _search_in_session(self, question: str, session_id: str, file_id: str = None, user_id: str = None):
+    def _search_in_session(self, question: str, session_id: str, user_id: str, file_id: str = None):
         """Perform enhanced search within user-session specific collection for accurate answers"""
         try:
             collection_name = self._get_collection_name(session_id, user_id)
@@ -988,16 +1107,32 @@ class EnhancedRAGService:
         numbered_context = ""
         relevant_chunks = []
         
-        # Filter and prioritize most relevant chunks
-        for i, chunk in enumerate(context_chunks[:3], 1):  # Limit to 3 most relevant chunks
-            if len(chunk.strip()) > self.MIN_CHUNK_LENGTH:  # Only use substantial chunks
-                numbered_context += f"\n[Source {i}]: {chunk.strip()}\n"
-                relevant_chunks.append(chunk)
+        # Check if citations are enabled in config
+        enable_citations = self.config_manager.get('ENABLE_CITATIONS', False)
         
-        if not relevant_chunks:
-            numbered_context = f"\n[Source 1]: {context_chunks[0] if context_chunks else 'No relevant content found'}\n"
+        # Filter and prioritize most relevant chunks
+        if enable_citations:
+            # Use numbered sources for citations
+            for i, chunk in enumerate(context_chunks[:3], 1):  # Limit to 3 most relevant chunks
+                if len(chunk.strip()) > self.MIN_CHUNK_LENGTH:  # Only use substantial chunks
+                    numbered_context += f"\n[Source {i}]: {chunk.strip()}\n"
+                    relevant_chunks.append(chunk)
+            
+            if not relevant_chunks:
+                numbered_context = f"\n[Source 1]: {context_chunks[0] if context_chunks else 'No relevant content found'}\n"
+        else:
+            # Use plain context without numbered sources
+            for chunk in context_chunks[:3]:  # Limit to 3 most relevant chunks
+                if len(chunk.strip()) > self.MIN_CHUNK_LENGTH:  # Only use substantial chunks
+                    numbered_context += f"\n{chunk.strip()}\n\n"
+                    relevant_chunks.append(chunk)
+            
+            if not relevant_chunks:
+                numbered_context = f"\n{context_chunks[0] if context_chunks else 'No relevant content found'}\n"
         
         # Create enhanced prompt for accurate and concise answers
+        citation_instruction = "- Include source numbers in brackets [1], [2] when referencing specific information" if enable_citations else "- Do not include source citations or reference numbers"
+        
         enhanced_prompt = f"""You are an expert document analyst. Answer the user's question using ONLY the provided source material. Be accurate, document-relevant, and concise while preserving all key information.
 
 STRICT GUIDELINES:
@@ -1020,7 +1155,7 @@ RESPONSE REQUIREMENTS:
 - Include key definitions, methods, findings, or implications
 - If uncertain or information is incomplete, acknowledge this
 - Aim for 3-5 sentences but include all essential information
-- Include source numbers in brackets [1], [2] when referencing specific information
+{citation_instruction}
 - Do not sacrifice important details for brevity
 
 Answer:"""
@@ -1084,6 +1219,19 @@ Answer:"""
         
         # Basic cleanup only
         answer = self.text_processor.clean_llm_output(answer)
+        
+        # Remove citations if they are disabled in config
+        enable_citations = self.config_manager.get('ENABLE_CITATIONS', False)
+        if not enable_citations:
+            # Remove citation numbers like [1], [2], [Source 1], etc.
+            answer = re.sub(r'\[(?:Source\s*)?\d+\]', '', answer)
+            answer = re.sub(r'\[\d+\]', '', answer)
+            # Clean up spacing issues from removed citations
+            answer = re.sub(r'\s*,\s*,', ',', answer)  # Fix double commas
+            answer = re.sub(r'\s*\.\s*\.', '.', answer)  # Fix double periods
+            answer = re.sub(r'\s+([.,!?])', r'\1', answer)  # Remove space before punctuation
+            answer = re.sub(r'\s+', ' ', answer)  # Clean up multiple spaces
+            answer = answer.strip()
         
         # Ensure proper ending
         if answer and not answer.endswith(('.', '!', '?')):
@@ -1176,18 +1324,22 @@ Answer:"""
             'quality_metrics': generation_result.get('quality_metrics', {})
         }
     
-    def generate_sample_questions(self, chunks=None, document_metadata: Dict[str, Any] = None, 
-                             session_id: str = None, user_id: str = None) -> List[str]:
+    def generate_sample_questions(self, session_id: str, user_id: str, 
+                             chunks=None, document_metadata: Dict[str, Any] = None) -> List[str]:
         """Generate sample questions using RAG pipeline from user-session documents"""
         try:
-            if session_id:
-                return self._generate_questions_from_session(session_id, user_id)
-            return self._get_fallback_questions()
+            return self._generate_questions_from_session(session_id, user_id)
         except Exception as e:
             logger.warning(f"Sample question generation failed: {str(e)}")
-            return self._get_fallback_questions()
+            # Return simple default questions
+            return [
+                "What is this document about?",
+                "Can you provide a summary?", 
+                "What are the main topics covered?",
+                "What conclusions can be drawn?"
+            ]
     
-    def _generate_questions_from_session(self, session_id: str, user_id: str = None) -> List[str]:
+    def _generate_questions_from_session(self, session_id: str, user_id: str) -> List[str]:
         """Generate questions using RAG pipeline from user-session documents"""
         try:
             collection_name = self._get_collection_name(session_id, user_id)
@@ -1206,7 +1358,7 @@ Answer:"""
             for query in sample_queries:
                 try:
                     # Use user-session search to get relevant content
-                    search_results = self._search_in_session(query, session_id, None, user_id)
+                    search_results = self._search_in_session(query, session_id, user_id, file_id=None)
                     for result in search_results[:2]:  # Take top 2 results per query
                         if hasattr(result, 'chunk') and hasattr(result.chunk, 'content'):
                             content = result.chunk.content.strip()
@@ -1218,7 +1370,13 @@ Answer:"""
             
             if not all_content:
                 logger.warning("No content found in user-session collection")
-                return self._get_fallback_questions()
+                # Return simple default questions
+                return [
+                    "What is this document about?",
+                    "Can you provide a summary?", 
+                    "What are the main topics covered?",
+                    "What conclusions can be drawn?"
+                ]
             
             # Combine content for analysis
             combined_content = " ".join(all_content[:10])  # Limit to avoid token limits
@@ -1233,7 +1391,13 @@ Answer:"""
                 
         except Exception as e:
             logger.error(f"User-session based question generation failed: {e}")
-            return self._get_fallback_questions()
+            # Return simple default questions
+            return [
+                "What is this document about?",
+                "Can you provide a summary?", 
+                "What are the main topics covered?",
+                "What conclusions can be drawn?"
+            ]
     
     def _generate_questions_with_llm(self, content: str) -> List[str]:
         """Generate questions using LLM based on document content"""
@@ -1265,7 +1429,7 @@ Generate exactly 5 questions, one per line, numbered 1-5:"""
             
             if len(questions) >= 3:
                 logger.info(f"Generated {len(questions)} LLM-based questions")
-                return questions[:5]
+                return questions[:4]
             else:
                 logger.warning("LLM generated insufficient questions, falling back")
                 return self._generate_questions_from_content(content)
@@ -1313,22 +1477,14 @@ Generate exactly 5 questions, one per line, numbered 1-5:"""
         
         # Format questions
         formatted_questions = []
-        for i, q in enumerate(questions[:5], 1):
+        for i, q in enumerate(questions[:4], 1):
             if not q.startswith(f"{i}."):
                 q = f"{i}. {q}"
             formatted_questions.append(q)
         
         return formatted_questions
     
-    def _get_fallback_questions(self) -> List[str]:
-        """Return fallback questions when generation fails"""
-        return [
-            "1. What is this document about?",
-            "2. What are the main points discussed?",
-            "3. What methods or approaches are described?",
-            "4. What are the key findings or results?", 
-            "5. What are the practical applications?"
-        ]
+
 
 
 __all__ = ['EnhancedRAGService']
