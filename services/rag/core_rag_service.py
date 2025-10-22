@@ -80,10 +80,10 @@ class EnhancedRAGService:
     _instance = None
     _lock = threading.Lock()
     
-    # Configuration constants
-    MAX_CONTEXT_CHUNKS = 4
-    MAX_SEARCH_RESULTS = 8
-    MIN_CHUNK_LENGTH = 30
+    # Configuration constants - Optimized for comprehensive document retrieval
+    MAX_CONTEXT_CHUNKS = 8  # Increased to capture more comprehensive content
+    MAX_SEARCH_RESULTS = 15  # Increased for better document coverage
+    MIN_CHUNK_LENGTH = 15  # Lowered to include concise but important information
     CONFIDENCE_ADJUSTMENT = 0.85
     ANSWER_CACHE_SIZE = 50
     ANSWER_CACHE_TTL = 300  # 5 minutes
@@ -863,37 +863,61 @@ class EnhancedRAGService:
             logger.error(f"Question answering failed: {str(e)}")
             return self._create_answer_error_response(f'Processing error: {str(e)}')
     
-    def _select_best_chunks(self, search_results: List, max_chunks: int = 4) -> List[str]:
-        """Select best chunks based on combined scoring"""
+    def _select_best_chunks(self, search_results: List, max_chunks: int = 8) -> List[str]:
+        """Select best chunks with comprehensive scoring for all document types"""
         scored_chunks = []
         
         for result in search_results[:self.MAX_SEARCH_RESULTS * 2]:
             if hasattr(result, 'chunk') and hasattr(result.chunk, 'content'):
                 content = result.chunk.content.strip()
                 
-                # Skip low-quality chunks
+                # Use minimal quality filtering
                 if len(content) < self.MIN_CHUNK_LENGTH or self._is_low_quality_chunk(content):
                     continue
                 
-                # Simple quality scoring
-                quality_score = (
-                    result.combined_score * 0.6 +
-                    (min(len(content), 500) / 500) * 0.2 +  # Length normalization
-                    0.2  # Base quality
-                )
+                # Enhanced quality scoring for comprehensive content
+                base_score = result.combined_score * 0.6
+                length_score = (min(len(content), 1500) / 1500) * 0.25  # Reward longer, detailed content
                 
+                # Content richness analysis
+                content_lower = content.lower()
+                richness_bonus = 0.0
+                
+                # Count unique meaningful words
+                import re
+                words = re.findall(r'\b[a-zA-Z]{3,}\b', content_lower)  # Words 3+ chars
+                unique_words = len(set(words))
+                if unique_words > 20:  # Rich content
+                    richness_bonus += 0.15
+                elif unique_words > 10:
+                    richness_bonus += 0.1
+                
+                # Boost for structured information (lists, specifications, etc.)
+                structure_indicators = ['•', ':', '-', 'features', 'specifications', 'includes', 'capacity']
+                structure_count = sum(1 for indicator in structure_indicators if indicator in content_lower)
+                if structure_count >= 3:
+                    richness_bonus += 0.1
+                
+                # Technical/detailed content bonus
+                detailed_terms = ['technology', 'system', 'model', 'version', 'specifications', 'series']
+                detail_count = sum(1 for term in detailed_terms if term in content_lower)
+                if detail_count >= 2:
+                    richness_bonus += 0.05
+                
+                quality_score = base_score + length_score + richness_bonus + 0.1
                 scored_chunks.append((content, quality_score))
         
-        # Sort and return top chunks
+        # Sort by quality score
         scored_chunks.sort(key=lambda x: x[1], reverse=True)
         
-        # Remove duplicates while preserving order
+        # Remove duplicates with improved detection
         seen = set()
         unique_chunks = []
-        for chunk, _ in scored_chunks[:max_chunks * 2]:
-            chunk_preview = chunk[:100]
-            if chunk_preview not in seen:
-                seen.add(chunk_preview)
+        for chunk, score in scored_chunks[:max_chunks * 3]:  # Check more candidates
+            # Use more sophisticated duplicate detection
+            chunk_signature = chunk[:200].lower().strip()
+            if chunk_signature not in seen:
+                seen.add(chunk_signature)
                 unique_chunks.append(chunk)
                 if len(unique_chunks) >= max_chunks:
                     break
@@ -1008,34 +1032,38 @@ class EnhancedRAGService:
         return processed.strip() if processed.strip() else question
     
     def _is_low_quality_chunk(self, content: str) -> bool:
-        """Filter out low-quality chunks that don't contribute to good answers"""
+        """Filter out low-quality chunks with minimal restrictions for all document types"""
         content_lower = content.lower().strip()
         
-        # Check for common low-quality patterns
-        low_quality_patterns = [
-            'click here', 'see also', 'table of contents', 'page number',
-            'copyright', '©', 'all rights reserved', 'terms of service',
-            'file size', 'last modified', 'created by', 'document title',
-            'n/a', 'tbd', 'todo', 'placeholder', 'lorem ipsum',
-        ]
-        
-        # Check length and content quality
+        # Very basic quality checks only
         if len(content_lower) < self.MIN_CHUNK_LENGTH:
             return True
             
-        # Check for repetitive content
-        words = content_lower.split()
-        if len(set(words)) < len(words) * 0.5:  # More than 50% repeated words
+        # Check for completely empty or whitespace-only content
+        if not content.strip():
             return True
             
-        # Check for low-quality patterns
-        for pattern in low_quality_patterns:
-            if pattern in content_lower:
-                return True
+        # Check for purely repetitive content (very lenient)
+        words = content_lower.split()
+        if len(words) < 3:  # Too short to be meaningful
+            return True
+            
+        # Only filter extremely repetitive content (90%+ repeated words)
+        if len(words) > 5 and len(set(words)) < len(words) * 0.1:
+            return True
+            
+        # Minimal low-quality patterns - only filter obvious junk
+        minimal_patterns = ['lorem ipsum', 'placeholder text', 'todo', 'tbd']
+        
+        # Only filter if content is PRIMARILY these patterns
+        pattern_count = sum(1 for pattern in minimal_patterns if pattern in content_lower)
+        if pattern_count > 0 and len(content_lower) < 50:  # Short content with patterns
+            return True
                 
-        # Check if content is mostly punctuation or numbers
+        # Check if content is purely punctuation or numbers (no actual text)
         import re
-        if re.match(r'^[\d\s\.\,\-\(\)\[\]]+$', content):
+        text_content = re.sub(r'[\d\s\.\,\-\(\)\[\]©™®•]+', '', content_lower)
+        if len(text_content) < 3:  # Less than 3 actual letters
             return True
                 
         return False
@@ -1071,20 +1099,22 @@ class EnhancedRAGService:
             
             max_score = scores[0]
             
-            # Adaptive threshold calculation
+            # More permissive adaptive threshold calculation for all document types
             if max_score > 0.5:
-                threshold = max(0.1, max_score * 0.3)
+                threshold = max(0.05, max_score * 0.2)  # More permissive for high scores
             elif max_score > 0.1:
                 median_score = scores[len(scores)//2] if len(scores) > 1 else scores[0]
-                threshold = min(max_score * 0.2, median_score)
+                threshold = min(max_score * 0.15, median_score * 0.8)  # More permissive
             else:
-                threshold = max(0.01, max_score * 0.1)
+                threshold = max(0.01, max_score * 0.05)  # Very permissive for low scores
             
+            # Less aggressive filtering - allow more results through
             if len(scores) >= 3:
-                top_30_percent_score = scores[min(2, len(scores)-1)]
-                threshold = min(threshold, top_30_percent_score)
+                top_50_percent_score = scores[min(4, len(scores)-1)]  # Top 50% instead of 30%
+                threshold = min(threshold, top_50_percent_score)
             
-            threshold = max(0.01, min(threshold, 0.8))
+            # Ensure threshold is never too restrictive
+            threshold = max(0.01, min(threshold, 0.6))  # Cap at 0.6 instead of 0.8
             
             # Thread-safe cache update
             with self.cache_lock:
@@ -1108,23 +1138,23 @@ class EnhancedRAGService:
         @staticmethod
         def create_answer_prompt(question: str, context_chunks: List[str], 
                                enable_citations: bool = False, 
-                               min_chunk_length: int = 30) -> str:
-            """Unified prompt creation for all answer types"""
-            # Process context efficiently
+                               min_chunk_length: int = 15) -> str:
+            """Unified prompt creation optimized for comprehensive document content"""
+            # Process more context for comprehensive answers
             numbered_context = ""
             relevant_chunks = []
             
             if enable_citations:
-                # Use numbered sources for citations
-                for i, chunk in enumerate(context_chunks[:3], 1):
+                # Use numbered sources for citations - include more sources
+                for i, chunk in enumerate(context_chunks[:5], 1):  # Increased from 3 to 5
                     if len(chunk.strip()) > min_chunk_length:
                         numbered_context += f"\n[Source {i}]: {chunk.strip()}\n"
                         relevant_chunks.append(chunk)
                 if not relevant_chunks:
                     numbered_context = f"\n[Source 1]: {context_chunks[0] if context_chunks else 'No relevant content found'}\n"
             else:
-                # Use plain context without numbered sources
-                for chunk in context_chunks[:3]:
+                # Use plain context without numbered sources - include more content
+                for chunk in context_chunks[:6]:  # Increased from 3 to 6
                     if len(chunk.strip()) > min_chunk_length:
                         numbered_context += f"\n{chunk.strip()}\n\n"
                         relevant_chunks.append(chunk)
