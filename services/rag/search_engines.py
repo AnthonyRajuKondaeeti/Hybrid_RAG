@@ -6,10 +6,13 @@ hybrid search that combines dense and sparse retrieval methods.
 """
 
 import logging
+import time
 import numpy as np
 from functools import lru_cache
 from typing import List, Optional
 from sentence_transformers import SentenceTransformer, CrossEncoder
+import tempfile
+import threading
 from .models import SemanticChunk, SearchResult
 from .text_processing import TextProcessor
 from ..utils.retry_utils import with_retry, performance_timer
@@ -53,6 +56,9 @@ class HybridSearchEngine:
         
         # Query embedding cache
         self._query_embedding_cache = {}
+        
+        # Lock to protect model reinitialization/usage to avoid concurrent cache writes
+        self.model_lock = threading.Lock()
 
     @with_retry()
     def index_chunks(self, chunks: List[SemanticChunk]):
@@ -63,15 +69,29 @@ class HybridSearchEngine:
             
         logger.info(f"Indexing {len(chunks)} semantic chunks...")
         
+        # ✅ NEW: Progress tracking for large documents
+        start_time = time.time()
+        
         with performance_timer("Dense embedding generation"):
             self._build_dense_index(chunks)
         
+        embedding_time = time.time() - start_time
+        
+        # ✅ NEW: Report performance metrics
+        chunks_per_second = len(chunks) / embedding_time if embedding_time > 0 else 0
+        logger.info(f"Dense indexing completed: {len(chunks)} chunks in {embedding_time:.2f}s "
+                   f"({chunks_per_second:.1f} chunks/sec)")
+        
         if HAS_BM25 and self._should_build_sparse_index(chunks):
+            sparse_start = time.time()
             with performance_timer("Sparse index generation"):
                 self._build_sparse_index(chunks)
+            sparse_time = time.time() - sparse_start
+            logger.info(f"Sparse indexing completed in {sparse_time:.2f}s")
         
         self.chunks_metadata = chunks
-        logger.info(f"Indexing complete. {len(chunks)} chunks indexed.")
+        total_time = time.time() - start_time
+        logger.info(f"Indexing complete: {len(chunks)} chunks indexed in {total_time:.2f}s")
 
     def _should_build_sparse_index(self, chunks: List[SemanticChunk]) -> bool:
         """Determine if sparse index should be built based on chunk count"""
@@ -82,12 +102,30 @@ class HybridSearchEngine:
 
     def _build_dense_index(self, chunks: List[SemanticChunk]):
         """Build dense embedding index with optimal batching"""
+        logger.info(f"Building dense index for {len(chunks)} chunks")
+        
         # Prepare texts efficiently
         texts_for_embedding = self._prepare_texts_for_embedding(chunks)
+        logger.info(f"Prepared {len(texts_for_embedding)} texts for embedding")
         
         # Generate embeddings in optimal batches
         batch_size = self.config_manager.get('EMBEDDING_BATCH_SIZE', 64) if self.config_manager else 64
-        embeddings = self._generate_embeddings_batch(texts_for_embedding, batch_size)
+        
+        # Reduce batch size for large documents to prevent memory issues
+        if len(texts_for_embedding) > 2000:
+            batch_size = min(batch_size, 10)
+            logger.info(f"Large document detected, reducing batch size to {batch_size}")
+        elif len(texts_for_embedding) > 1000:
+            batch_size = min(batch_size, 20)
+            logger.info(f"Medium document detected, reducing batch size to {batch_size}")
+            
+        logger.info(f"Starting embedding generation with batch size {batch_size}")
+        try:
+            embeddings = self._generate_embeddings_batch(texts_for_embedding, batch_size)
+            logger.info(f"Successfully generated {len(embeddings)} embeddings")
+        except Exception as e:
+            logger.error(f"Embedding generation failed in _build_dense_index: {e}")
+            raise
         
         self.dense_index = embeddings
         
@@ -124,34 +162,132 @@ class HybridSearchEngine:
             return texts
 
     def _generate_embeddings_batch(self, texts: List[str], batch_size: int) -> List[np.ndarray]:
-        """Generate embeddings in batches with optimal settings"""
+        """Generate embeddings in batches with robust error handling for large documents"""
+        
+        # ✅ IMPROVED: Better adaptive batch sizing
+        if len(texts) > 5000:
+            batch_size = 8  # Very small batches for very large documents
+            logger.info(f"Very large document detected ({len(texts)} chunks), using batch size {batch_size}")
+        elif len(texts) > 2000:
+            batch_size = 16  # Small batches for large documents
+            logger.info(f"Large document detected ({len(texts)} chunks), using batch size {batch_size}")
+        elif len(texts) > 1000:
+            batch_size = 32  # Medium batches
+            logger.info(f"Medium document detected ({len(texts)} chunks), using batch size {batch_size}")
+        
         embeddings = []
         total_batches = (len(texts) + batch_size - 1) // batch_size
+        
+        logger.info(f"Starting embedding generation: {len(texts)} texts in {total_batches} batches")
         
         for i in range(0, len(texts), batch_size):
             batch_texts = texts[i:i + batch_size]
             batch_num = (i // batch_size) + 1
             
-            try:
-                batch_embeddings = self.embedding_model.encode(
-                    batch_texts,
-                    batch_size=32,  # Internal model batch size
-                    normalize_embeddings=True,
-                    show_progress_bar=False,
-                    convert_to_numpy=True
-                )
-                embeddings.extend(batch_embeddings)
-                
-                if batch_num % 5 == 0 or batch_num == total_batches:
-                    logger.info(f"Processed batch {batch_num}/{total_batches}")
+            retry_count = 0
+            max_retries = 2  # ✅ REDUCED: Less retries, faster failure
+            
+            while retry_count < max_retries:
+                try:
+                    # ✅ SIMPLIFIED: Remove health checks and complex retry logic
+                    # Just do the encoding with good settings
+                    batch_embeddings = self.embedding_model.encode(
+                        batch_texts,
+                        batch_size=min(16, len(batch_texts)),
+                        normalize_embeddings=True,
+                        show_progress_bar=False,
+                        convert_to_numpy=True,
+                        device='cpu'
+                    )
+                    embeddings.extend(batch_embeddings)
                     
-            except Exception as e:
-                logger.error(f"Error in batch {batch_num}: {str(e)}")
-                # Use zero embeddings as fallback
-                zero_embedding = np.zeros(self.embedding_model.get_sentence_embedding_dimension())
-                embeddings.extend([zero_embedding] * len(batch_texts))
+                    if batch_num % 10 == 0 or batch_num == total_batches:
+                        logger.info(f"Processed batch {batch_num}/{total_batches} ({len(embeddings)} total embeddings)")
+                    
+                    break  # Success, exit retry loop
+                    
+                except Exception as e:
+                    retry_count += 1
+                    error_str = str(e).lower()
+                    
+                    # ✅ IMPROVED: Better error classification
+                    if 'no such group' in error_str or 'hdf5' in error_str or 'cache' in error_str:
+                        logger.error(f"Model cache error in batch {batch_num}, attempt {retry_count}/{max_retries}: {e}")
+                        
+                        if retry_count < max_retries:
+                            # ✅ LIGHT CLEANUP: Just clear memory, don't delete cache
+                            logger.info("Performing light memory cleanup...")
+                            import gc
+                            import torch
+                            gc.collect()
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                            continue
+                    else:
+                        logger.error(f"Unexpected error in batch {batch_num}, attempt {retry_count}/{max_retries}: {e}")
+                    
+                    # ❌ REMOVE FALLBACK: Don't use zero embeddings - fail fast instead
+                    if retry_count >= max_retries:
+                        logger.error(f"Failed to process batch {batch_num} after {max_retries} attempts")
+                        raise Exception(f"Embedding generation failed at batch {batch_num}/{total_batches}: {str(e)}")
         
+        logger.info(f"Embedding generation completed: {len(embeddings)} embeddings generated successfully")
         return embeddings
+    
+    def _reinitialize_model_after_corruption(self, use_temp_cache: bool = False):
+        """Helper method to reinitialize the model after cache corruption
+
+        If use_temp_cache=True, a per-process temporary cache directory will be
+        used to avoid shared-cache corruption from concurrent processes.
+        """
+        import gc
+        import torch
+        import os
+        import shutil
+        import tempfile
+
+        # Clear memory and cache aggressively
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # If not using a temp cache, clear shared cache directories
+        if not use_temp_cache:
+            try:
+                cache_dir = os.path.expanduser("~/.cache/torch/sentence_transformers")
+                if os.path.exists(cache_dir):
+                    logger.info("Clearing corrupted sentence transformers shared cache")
+                    shutil.rmtree(cache_dir, ignore_errors=True)
+            except Exception as cache_error:
+                logger.warning(f"Failed to clear shared cache: {cache_error}")
+
+        # Delete current model instance
+        if hasattr(self, 'embedding_model'):
+            try:
+                del self.embedding_model
+            except Exception:
+                pass
+        gc.collect()
+
+        # Reinitialize model with fresh isolated cache by default when requested
+        from sentence_transformers import SentenceTransformer
+        embedding_model_name = 'sentence-transformers/all-MiniLM-L6-v2'
+
+        if use_temp_cache:
+            temp_cache = tempfile.mkdtemp(prefix="st_cache_")
+            logger.info(f"Initializing new embedding model using isolated cache: {temp_cache}")
+            self.embedding_model = SentenceTransformer(
+                embedding_model_name,
+                device='cpu',
+                cache_folder=temp_cache
+            )
+        else:
+            logger.info("Initializing new embedding model using shared cache")
+            self.embedding_model = SentenceTransformer(
+                embedding_model_name,
+                device='cpu',
+                cache_folder=None  # Force fresh download into shared cache
+            )
 
     def _build_sparse_index(self, chunks: List[SemanticChunk]):
         """Build BM25 sparse index efficiently"""

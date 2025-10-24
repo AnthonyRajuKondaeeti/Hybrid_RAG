@@ -177,21 +177,48 @@ class EnhancedRAGService:
         self._request_interval = 60.0 / self._max_requests_per_minute  # 6 seconds between requests
     
     def _initialize_models(self):
-        """Initialize ML models with better configuration"""
+        """Initialize ML models with better configuration and cache handling"""
         try:
             from sentence_transformers import SentenceTransformer, CrossEncoder
+            import torch
             
             embedding_model_name = self.config_manager.get('EMBEDDING_MODEL', 'sentence-transformers/all-MiniLM-L6-v2')
             
-            self.embedding_model = SentenceTransformer(
-                embedding_model_name,
-                device=self.config_manager.get('DEVICE', 'cpu')
-            )
+            # Clear any corrupted cache before loading
+            try:
+                torch.hub._clear_cache()
+            except:
+                pass
+            
+            # Initialize with robust error handling
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    self.embedding_model = SentenceTransformer(
+                        embedding_model_name,
+                        device=self.config_manager.get('DEVICE', 'cpu'),
+                        cache_folder=None  # Force fresh download if cache is corrupted
+                    )
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Model loading attempt {attempt + 1} failed: {e}, retrying...")
+                        # Clear cache and try again
+                        try:
+                            import shutil
+                            import os
+                            cache_dir = os.path.expanduser("~/.cache/torch/sentence_transformers")
+                            if os.path.exists(cache_dir):
+                                shutil.rmtree(cache_dir, ignore_errors=True)
+                        except:
+                            pass
+                    else:
+                        raise e
             
             # Warmup embedding model
             self._warmup_embedding_model()
             
-            # Initialize reranker
+            # Initialize reranker with similar error handling
             reranker_model = self.config_manager.get('RERANKER_MODEL', 'cross-encoder/ms-marco-MiniLM-L-6-v2')
             try:
                 self.reranker = CrossEncoder(reranker_model)
@@ -545,9 +572,7 @@ class EnhancedRAGService:
                 is_image = file_ext in getattr(self.config_manager.config, 'SUPPORTED_IMAGE_FORMATS', ['jpg', 'jpeg', 'png', 'bmp', 'tiff'])
                 
                 if is_image:
-                    # For images, we might have OCR-extracted content
                     logger.info(f"Processing image file: {file_id}")
-                    # Add image-specific metadata to chunks
                     for chunk in chunks:
                         if hasattr(chunk, 'metadata'):
                             chunk.metadata['is_image_content'] = True
@@ -555,49 +580,180 @@ class EnhancedRAGService:
                             chunk.metadata['content_type'] = 'image_ocr'
                 
                 # Extract full text
-                full_text = "\n\n".join([getattr(chunk, 'page_content', str(chunk)) for chunk in chunks])
+                logger.info(f"Extracting text from {len(chunks)} chunks")
+                try:
+                    full_text = "\n\n".join([getattr(chunk, 'page_content', str(chunk)) for chunk in chunks])
+                    logger.info(f"Extracted {len(full_text)} characters of text")
+                except Exception as text_error:
+                    logger.error(f"Failed to extract text from chunks: {text_error}")
+                    raise
                 
                 # Add file_id to metadata
                 processing_metadata = {**document_metadata, 'file_id': file_id}
                 
-                # Add image-specific processing metadata
                 if is_image:
                     processing_metadata['is_image_document'] = True
                     processing_metadata['extraction_method'] = 'ocr'
                 
                 # Create semantic chunks
-                semantic_chunks = self.chunker.chunk_document(full_text, processing_metadata)
-                logger.info(f"Created {len(semantic_chunks)} semantic chunks")
+                logger.info(f"Creating semantic chunks with chunker (chunk_size={self.chunker.target_chunk_size})")
+                try:
+                    semantic_chunks = self.chunker.chunk_document(full_text, processing_metadata)
+                    logger.info(f"Created {len(semantic_chunks)} semantic chunks")
+                except Exception as chunk_error:
+                    logger.error(f"Semantic chunking failed: {chunk_error}")
+                    logger.exception("Full chunking error traceback:")
+                    raise
+                
+                # Light memory cleanup for very large documents
+                if len(semantic_chunks) > 2000:
+                    logger.info(f"Large document ({len(semantic_chunks)} chunks) - performing light memory cleanup")
+                    import gc
+                    gc.collect()
                 
                 # Build search indexes
-                self.search_engine.index_chunks(semantic_chunks)
+                logger.info("Building search indexes...")
+                try:
+                    self.search_engine.index_chunks(semantic_chunks)
+                    logger.info("Search indexes built successfully")
+                except Exception as index_error:
+                    logger.error(f"Search indexing failed: {index_error}")
+                    logger.exception("Full indexing error traceback:")
+                    raise
+                
+                # Verify chunks have valid embeddings after indexing
+                chunks_without_embeddings = [chunk for chunk in semantic_chunks 
+                                           if chunk.contextual_embedding is None or 
+                                           (isinstance(chunk.contextual_embedding, np.ndarray) and 
+                                            np.allclose(chunk.contextual_embedding, 0))]
+                
+                if chunks_without_embeddings:
+                    logger.error(f"Found {len(chunks_without_embeddings)} chunks without valid embeddings after indexing")
+                    return self._create_error_response(
+                        f"Failed to generate embeddings for {len(chunks_without_embeddings)} chunks",
+                        'embedding_generation_error',
+                        {'file_id': file_id, 'failed_chunks': len(chunks_without_embeddings)}
+                    )
                 
                 # Store in vector database
-                storage_result = self._store_chunks_in_qdrant(semantic_chunks, file_id, document_metadata, session_id, user_id)
+                logger.info("Storing chunks in Qdrant...")
+                try:
+                    storage_result = self._store_chunks_in_qdrant(semantic_chunks, file_id, document_metadata, session_id, user_id)
+                    logger.info("Chunks stored successfully in Qdrant")
+                except Exception as storage_error:
+                    logger.error(f"Qdrant storage failed: {storage_error}")
+                    logger.exception("Full storage error traceback:")
+                    raise
                 
-                # Store document metadata
-                self._store_document_metadata(file_id, document_metadata, session_id, user_id)
+                if storage_result is None:
+                    raise Exception("Failed to store document in vector database")
                 
-                self.stats['documents_processed'] += 1
-                
-                return {
-                    'success': True,
-                    'chunks_count': len(semantic_chunks),
-                    'file_id': file_id,
-                    'processing_time': storage_result.get('processing_time', 0),
-                    'chunk_types': Counter(chunk.chunk_type for chunk in semantic_chunks),
-                    'avg_semantic_density': np.mean([chunk.semantic_density for chunk in semantic_chunks]),
-                    'is_image_content': is_image,
-                    'processing_method': 'ocr_enhanced' if is_image else 'standard'
-                }
+            # Store document metadata
+            logger.info("Storing document metadata...")
+            self._store_document_metadata(file_id, document_metadata, session_id, user_id)
+            
+            self.stats['documents_processed'] += 1
+            
+            return {
+                'success': True,
+                'chunks_count': len(semantic_chunks),
+                'file_id': file_id,
+                'processing_time': storage_result.get('processing_time', 0),
+                'chunk_types': Counter(chunk.chunk_type for chunk in semantic_chunks),
+                'avg_semantic_density': np.mean([chunk.semantic_density for chunk in semantic_chunks]),
+                'is_image_content': is_image,
+                'processing_method': 'standard'
+            }
                 
         except Exception as e:
-            logger.error(f"Document storage failed: {str(e)}")
+            logger.error(f"Document storage failed at line {e.__traceback__.tb_lineno}: {str(e)}")
+            logger.exception("Full error traceback:")
+            import traceback
+            logger.error(f"Detailed traceback: {traceback.format_exc()}")
             return ErrorResponse.create(
                 error_message=str(e),
                 error_type=self._classify_error(str(e)),
                 context={'file_id': file_id, 'session_id': session_id}
             )
+    
+    def _process_chunks_in_batches(self, semantic_chunks):
+        """Process chunks in smaller batches when full processing fails"""
+        batch_size = 50  # Smaller batches for problematic documents
+        
+        logger.info(f"Processing {len(semantic_chunks)} chunks in batches of {batch_size}")
+        
+        for i in range(0, len(semantic_chunks), batch_size):
+            batch = semantic_chunks[i:i + batch_size]
+            batch_num = (i // batch_size) + 1
+            total_batches = (len(semantic_chunks) + batch_size - 1) // batch_size
+            
+            try:
+                logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} chunks)")
+                
+                # Generate embeddings for this batch
+                texts = [chunk.content for chunk in batch]
+                embeddings = self.embedding_model.encode(
+                    texts,
+                    batch_size=16,  # Even smaller internal batch size
+                    show_progress_bar=False,
+                    normalize_embeddings=True
+                )
+                
+                # Assign embeddings to chunks
+                for chunk, embedding in zip(batch, embeddings):
+                    chunk.contextual_embedding = embedding
+                    
+                logger.info(f"Batch {batch_num} completed successfully")
+                
+            except Exception as e:
+                logger.error(f"Batch {batch_num} failed: {e}")
+                # Try individual processing for this batch
+                for chunk in batch:
+                    try:
+                        embedding = self.embedding_model.encode([chunk.content], show_progress_bar=False)[0]
+                        chunk.contextual_embedding = embedding
+                    except Exception as e2:
+                        logger.error(f"Individual chunk processing failed: {e2}")
+                        # Use zero embedding as absolute fallback
+                        chunk.contextual_embedding = np.zeros(self.embedding_dim)
+    
+    def _light_memory_cleanup(self):
+        """
+        Perform light memory cleanup without deleting model cache or reinitializing models.
+        
+        ✅ NEW METHOD: This replaces the aggressive _clear_embedding_cache() method.
+        Only does memory cleanup, doesn't touch the HuggingFace cache or reinitialize models.
+        """
+        try:
+            import gc
+            import torch
+            
+            logger.info("Performing light memory cleanup...")
+            
+            # Clear PyTorch GPU cache if available
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logger.info("GPU cache cleared")
+            
+            # Force garbage collection
+            gc.collect()
+            logger.info("Python garbage collection completed")
+            
+            # ✅ THAT'S IT! No cache deletion, no model reinitialization
+            logger.info("Light memory cleanup completed successfully")
+            
+        except Exception as e:
+            logger.warning(f"Light memory cleanup failed (non-critical): {e}")
+            # Don't raise - memory cleanup failure shouldn't stop processing
+    
+    # ❌ DEPRECATED: Keep the old method but make it call the light version
+    def _clear_embedding_cache(self):
+        """
+        DEPRECATED: This method is too aggressive and causes problems.
+        Redirecting to light memory cleanup instead.
+        """
+        logger.warning("_clear_embedding_cache called - redirecting to light memory cleanup")
+        self._light_memory_cleanup()
     
     def _create_error_response(self, message: str, error_type: str = 'general_error', 
                               context: Dict[str, Any] = None, 
@@ -624,34 +780,75 @@ class EnhancedRAGService:
         """Classify error type for better handling"""
         error_lower = error_msg.lower()
         
-        if any(term in error_lower for term in ["no such group", "hdf5", "cache"]):
+        if any(term in error_lower for term in ["no such group", "hdf5", "cache", "corrupt"]):
             return 'transient_model_error'
-        elif any(term in error_lower for term in ["division by zero", "empty"]):
+        elif any(term in error_lower for term in ["division by zero", "empty", "no chunks"]):
             return 'empty_content_error'
-        elif any(term in error_lower for term in ["rate", "429", "capacity"]):
+        elif any(term in error_lower for term in ["rate", "429", "capacity", "too many requests"]):
             return 'rate_limit_error'
+        elif any(term in error_lower for term in ["memory", "out of memory", "cuda", "gpu"]):
+            return 'memory_error'
+        elif any(term in error_lower for term in ["embedding", "encode", "model"]):
+            return 'model_processing_error'
         else:
             return 'general_processing_error'
     
     def _store_chunks_in_qdrant(self, semantic_chunks: List[SemanticChunk], 
                                file_id: str, document_metadata: Dict[str, Any],
                                session_id: str, user_id: str) -> Dict[str, Any]:
-        """Store semantic chunks in Qdrant with batch processing"""
+        """Store semantic chunks in Qdrant with batch processing and validation"""
         from qdrant_client.http import models
         
+        # ✅ IMPROVED: Better validation with clear error messages
+        valid_chunks = []
+        invalid_count = 0
+        
+        for i, chunk in enumerate(semantic_chunks):
+            # Check if chunk has embedding
+            if chunk.contextual_embedding is None:
+                invalid_count += 1
+                logger.warning(f"Chunk {i} has no embedding (None)")
+                continue
+            
+            # Check if embedding has correct shape
+            if not hasattr(chunk.contextual_embedding, 'shape'):
+                invalid_count += 1
+                logger.warning(f"Chunk {i} has invalid embedding (no shape attribute)")
+                continue
+            
+            # Check if embedding is not all zeros
+            if isinstance(chunk.contextual_embedding, np.ndarray) and np.allclose(chunk.contextual_embedding, 0):
+                invalid_count += 1
+                logger.warning(f"Chunk {i} has zero embedding")
+                continue
+            
+            valid_chunks.append(chunk)
+        
+        # ✅ FAIL FAST: If too many chunks are invalid, stop immediately
+        if invalid_count > 0:
+            invalid_percentage = (invalid_count / len(semantic_chunks)) * 100
+            logger.error(f"Found {invalid_count}/{len(semantic_chunks)} chunks with invalid embeddings ({invalid_percentage:.1f}%)")
+            
+            if invalid_percentage > 10:  # More than 10% invalid is a critical error
+                raise Exception(f"Too many chunks ({invalid_count}/{len(semantic_chunks)}) have invalid embeddings. "
+                              f"This indicates a problem with embedding generation. Please try again.")
+        
+        if not valid_chunks:
+            raise Exception("No valid chunks with embeddings found for storage")
+        
+        logger.info(f"Storing {len(valid_chunks)} valid chunks (skipped {invalid_count} invalid)")
+        
+        # Create points for Qdrant
         points = []
+        for chunk in valid_chunks:
+            payload = self._create_chunk_payload(chunk, file_id, document_metadata)
+            points.append(models.PointStruct(
+                id=str(uuid.uuid4()),
+                vector=chunk.contextual_embedding.tolist(),
+                payload=payload
+            ))
         
-        for chunk in semantic_chunks:
-            if chunk.contextual_embedding is not None:
-                payload = self._create_chunk_payload(chunk, file_id, document_metadata)
-                
-                points.append(models.PointStruct(
-                    id=str(uuid.uuid4()),
-                    vector=chunk.contextual_embedding.tolist(),
-                    payload=payload
-                ))
-        
-        # Batch upload with user-session specific collection
+        # Batch upload
         return self._batch_upload_to_qdrant(points, session_id, user_id)
     
     def _create_chunk_payload(self, chunk: SemanticChunk, file_id: str, 
@@ -893,7 +1090,7 @@ class EnhancedRAGService:
                     richness_bonus += 0.1
                 
                 # Boost for structured information (lists, specifications, etc.)
-                structure_indicators = ['•', ':', '-', 'features', 'specifications', 'includes', 'capacity']
+                structure_indicators = ['â€¢', ':', '-', 'features', 'specifications', 'includes', 'capacity']
                 structure_count = sum(1 for indicator in structure_indicators if indicator in content_lower)
                 if structure_count >= 3:
                     richness_bonus += 0.1
@@ -1062,7 +1259,7 @@ class EnhancedRAGService:
                 
         # Check if content is purely punctuation or numbers (no actual text)
         import re
-        text_content = re.sub(r'[\d\s\.\,\-\(\)\[\]©™®•]+', '', content_lower)
+        text_content = re.sub(r'[\d\s\.\,\-\(\)\[\]Â©â„¢Â®â€¢]+', '', content_lower)
         if len(text_content) < 3:  # Less than 3 actual letters
             return True
                 
