@@ -1096,13 +1096,6 @@ Production Server
 # - Add error handling for external APIs
 ```
 
-## Related Links
-
-- [Live Demo](https://demo.xplorease.com) (if available)
-- [Full Documentation](https://docs.xplorease.com) (if available)
-- [Report Issues](https://github.com/AnthonyRajuKondaeeti/Xplorease_V2/issues)
-- [Discussions](https://github.com/AnthonyRajuKondaeeti/Xplorease_V2/discussions)
-- [Contact Team](mailto:support@xplorease.com) (if available)
 
 ## License
 
@@ -1110,8 +1103,6 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ```
 MIT License
-
-Copyright (c) 2025 Xplorease Team
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -1124,12 +1115,6 @@ The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 ```
 
-## Project Status & Metrics
-
-![GitHub last commit](https://img.shields.io/github/last-commit/AnthonyRajuKondaeeti/Xplorease_V2)
-![GitHub issues](https://img.shields.io/github/issues/AnthonyRajuKondaeeti/Xplorease_V2)
-![GitHub stars](https://img.shields.io/github/stars/AnthonyRajuKondaeeti/Xplorease_V2)
-![GitHub forks](https://img.shields.io/github/forks/AnthonyRajuKondaeeti/Xplorease_V2)
 
 ### Star this repository if you find it helpful!
 
@@ -1140,6 +1125,6 @@ Multi-Format Support | Production Stability | Comprehensive Testing
 
 ---
 
-Built with love (and slightly unhealthy dedication) by Anthony Raju Kondaveeti 🫅 & the Xplorease Team.
+Built with love (and slightly unhealthy dedication) by Anthony Raju Kondaveeti 🫅.
 
-Need Help? [Open an Issue](https://github.com/AnthonyRajuKondaeeti/Xplorease_V2/issues) | Have Ideas? [Start a Discussion](https://github.com/AnthonyRajuKondaeeti/Xplorease_V2/discussions)
+
