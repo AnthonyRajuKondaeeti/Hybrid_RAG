@@ -1,4 +1,4 @@
-# Xplorease V2 - Enterprise AI Document Intelligence Platform
+# Enterprise AI Document Intelligence Platform
 
 [![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://python.org)
 [![Flask](https://img.shields.io/badge/Flask-3.1+-green.svg)](https://flask.palletsprojects.com/)
@@ -254,7 +254,7 @@ Our Enhanced RAG Pipeline represents a quantum leap beyond traditional implement
 
 ### Pipeline Architecture Comparison
 
-| Feature            | Traditional RAG          | Xplorease V2.1                        |
+| Feature            | Traditional RAG          | Hybrid_RAG V2.1                        |
 | ------------------ | ------------------------ | ------------------------------------- |
 | Collections        | Single shared collection | Session-based isolated collections    |
 | Retrieval          | Single embedding model   | Hybrid dense + sparse + re-ranking    |
@@ -314,8 +314,8 @@ Our Enhanced RAG Pipeline represents a quantum leap beyond traditional implement
 
 ```bash
 # 1. Clone repository and setup environment
-git clone https://github.com/AnthonyRajuKondaeeti/Xplorease_V2.git
-cd Xplorease_V2-main
+git clone https://github.com/AnthonyRajuKondaeeti/Hybrid_RAG.git
+cd main
 python -m venv env
 
 # Activate virtual environment
@@ -343,7 +343,7 @@ MAX_CONTENT_LENGTH=52428800
 python -c "from services.rag.core_rag_service import EnhancedRAGService; import config; rag = EnhancedRAGService(config); print('RAG Service initialized successfully')"
 
 # 5. Start the server
-python xplorease_main_v2_edited.py  # Main Flask application (development & production)
+python main_v2_edited.py  # Main Flask application (development & production)
 ```
 
 Server running at: `http://localhost:5000`
@@ -569,7 +569,7 @@ System Performance: EXCELLENT
 python -c "from services.rag.core_rag_service import EnhancedRAGService; import config; print('All services connected')"
 
 # Test the main application startup
-python xplorease_main_v2_edited.py
+python main_v2_edited.py
 ```
 
 #### API Testing with cURL
@@ -872,9 +872,9 @@ Perfect Context Boundaries       Perfect Context Boundaries
 ### Enhanced Project Structure
 
 ```
-Xplorease_V2-main/
+main/
 ├── config.py                   # Configuration management
-├── xplorease_main_v2_edited.py # Main Flask application (development & production)
+├── main_v2_edited.py # Main Flask application (development & production)
 ├── requirements.txt            # Python dependencies
 ├── .env                        # Environment variables (not in repo)
 ├── .env.example               # Environment template
@@ -1031,8 +1031,8 @@ Production Server
 1. Fork & Clone
 
    ```bash
-   git clone https://github.com/YourUsername/Xplorease_V2.git
-   cd Xplorease_V2-main
+   git clone https://github.com/YourUsername/Hybrid_RAG.git
+   cd main
    ```
 
 2. Create Feature Branch
